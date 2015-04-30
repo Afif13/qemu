@@ -10,7 +10,7 @@ notifications:
         - skarandikar@berkeley.edu
 env:
   global:
-    - TEST_CMD="make check"
+    - TEST_CMD=""
     - EXTRA_CONFIG=""
     # Development packages, EXTRA_PKGS saved for additional builds
     - CORE_PKGS="libusb-1.0-0-dev libiscsi-dev librados-dev libncurses5-dev"
@@ -37,13 +37,30 @@ env:
       #    - TARGETS=xtensa-softmmu,xtensaeb-softmmu
     - TARGETS=riscv-softmmu
 before_install:
+  - wget -O - http://people.linaro.org/~alex.bennee/qemu-submodule-git-seed.tar.xz | tar -xvJ
   - git submodule update --init --recursive
   - sudo apt-get update -qq
   - sudo apt-get install -qq ${CORE_PKGS} ${NET_PKGS} ${GUI_PKGS} ${EXTRA_PKGS}
-script: "./configure --target-list=${TARGETS} ${EXTRA_CONFIG} && make && ${TEST_CMD}"
+before_script:
+  - ./configure --target-list=${TARGETS} --enable-debug-tcg ${EXTRA_CONFIG}
+script:
+  - make -j2 && ${TEST_CMD}
 matrix:
   # We manually include a number of additional build for non-standard bits
   include:
+    # Make check target (we only do this once)
+    - env:
+        - TARGETS=alpha-softmmu,arm-softmmu,aarch64-softmmu,cris-softmmu,
+                  i386-softmmu,x86_64-softmmu,m68k-softmmu,microblaze-softmmu,
+                  microblazeel-softmmu,mips-softmmu,mips64-softmmu,
+                  mips64el-softmmu,mipsel-softmmu,or32-softmmu,ppc-softmmu,
+                  ppc64-softmmu,ppcemb-softmmu,s390x-softmmu,sh4-softmmu,
+                  sh4eb-softmmu,sparc-softmmu,sparc64-softmmu,
+                  unicore32-softmmu,unicore32-linux-user,
+                  lm32-softmmu,moxie-softmmu,tricore-softmmu,xtensa-softmmu,
+                  xtensaeb-softmmu
+          TEST_CMD="make check"
+      compiler: gcc
     # Debug related options
     - env: TARGETS=riscv-softmmu
            EXTRA_CONFIG="--enable-debug"

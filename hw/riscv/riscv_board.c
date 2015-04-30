@@ -47,6 +47,7 @@
 #include "elf.h"
 #include "hw/timer/mc146818rtc.h"
 #include "hw/timer/i8254.h"
+#include "sysemu/block-backend.h"
 #include "sysemu/blockdev.h"
 #include "exec/address-spaces.h"
 #include "hw/sysbus.h"             /* SysBusDevice */
@@ -96,7 +97,7 @@ static void main_cpu_reset(void *opaque)
     cpu_reset(CPU(cpu));
 }
 
-static void riscv_board_init(QEMUMachineInitArgs *args)
+static void riscv_board_init(MachineState *args)
 {
     ram_addr_t ram_size = args->ram_size;
     const char *cpu_model = args->cpu_model;
@@ -148,8 +149,7 @@ static void riscv_board_init(QEMUMachineInitArgs *args)
     env = &cpu->env;
 
     /* register system main memory (actual RAM) */
-    memory_region_init_ram(main_mem, NULL, "riscv_board.ram", ram_size);
-    vmstate_register_ram_global(main_mem);
+    memory_region_allocate_system_memory(main_mem, NULL, "riscv_board.ram", ram_size);
     memory_region_add_subregion(system_memory, 0x0, main_mem);
 
     if (bios_name) {
@@ -158,8 +158,7 @@ static void riscv_board_init(QEMUMachineInitArgs *args)
         bios_size = get_image_size(bios_name);
 	if (bios_size > 0) {
             bios = g_malloc(sizeof(*bios));
-            memory_region_init_ram(bios, NULL, "riscv.fw", bios_size);
-            vmstate_register_ram_global(bios);
+            memory_region_allocate_system_memory(bios, NULL, "riscv.fw", bios_size);
             memory_region_set_readonly(bios, true);
             if (rom_add_file_fixed(bios_name, 0, -1) != 0) {
                 fprintf(stderr, "qemu: could not load RISC-V firmware '%s'\n", bios_name);
@@ -190,7 +189,7 @@ static void riscv_board_init(QEMUMachineInitArgs *args)
     if (NULL == htifbd_drive) {
         htifbd_fname = NULL;
     } else {
-        htifbd_fname = (*(htifbd_drive->bdrv)).filename;
+        htifbd_fname = (*(blk_bs(blk_by_legacy_dinfo(htifbd_drive)))).filename;
     }
 
     // add htif device 0x400 - 0x410

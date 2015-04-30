@@ -1,5 +1,3 @@
-#include "exec/def-helper.h"
-
 // Exceptions
 DEF_HELPER_2(raise_exception, noreturn, env, i32)
 
@@ -76,5 +74,3 @@ DEF_HELPER_2(scall, tl, env, tl)
 DEF_HELPER_1(tlb_flush, void, env)
 #endif /* !CONFIG_USER_ONLY */
 //DEF_HELPER_1(wait, void, env)
-
-#include "exec/def-helper.h"

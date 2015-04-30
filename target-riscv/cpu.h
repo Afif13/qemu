@@ -5,6 +5,8 @@
 
 #define TARGET_HAS_ICE 1
 
+#define ALIGNED_ONLY
+
 #define ELF_MACHINE	EM_RISCV
 
 #define CPUArchState struct CPURISCVState

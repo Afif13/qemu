@@ -19,13 +19,10 @@
  */
 #include <stdlib.h>
 #include "cpu.h"
+#include "exec/helper-proto.h"
+#include "sysemu/sysemu.h"
 #include "qemu/host-utils.h"
 
-#include "helper.h"
-
-#if !defined(CONFIG_USER_ONLY)
-#include "exec/softmmu_exec.h"
-#endif /* !defined(CONFIG_USER_ONLY) */
 
 // custom floating point includes. use this instead of qemu's included 
 // fpu/softmmu since we know it already works exactly as desired for riscv 
@@ -618,24 +615,10 @@ void helper_tlb_flush(CPURISCVState *env)
 
 #if !defined(CONFIG_USER_ONLY)
 
+#if 0
 static void /*QEMU_NORETURN*/ do_unaligned_access(CPURISCVState *env,
                                               target_ulong addr, int rw,
                                               int is_user, uintptr_t retaddr);
-
-#define MMUSUFFIX _mmu
-#define ALIGNED_ONLY
-
-#define SHIFT 0
-#include "exec/softmmu_template.h"
-
-#define SHIFT 1
-#include "exec/softmmu_template.h"
-
-#define SHIFT 2
-#include "exec/softmmu_template.h"
-
-#define SHIFT 3
-#include "exec/softmmu_template.h"
 
 static void do_unaligned_access(CPURISCVState *env, target_ulong addr,
                                 int rw, int is_user, uintptr_t retaddr)
@@ -652,6 +635,7 @@ static void do_unaligned_access(CPURISCVState *env, target_ulong addr,
     }
     do_raise_exception_err(env, cs->exception_index, 0);
 }
+#endif
 
 /* called by qemu's softmmu to fill the qemu tlb */
 void tlb_fill(CPUState *cs, target_ulong addr, int is_write, int mmu_idx,

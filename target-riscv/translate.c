@@ -21,10 +21,10 @@
 #include "cpu.h"
 #include "disas/disas.h"
 #include "tcg-op.h"
+#include "exec/cpu_ldst.h"
 
-#include "helper.h"
-#define GEN_HELPER 1
-#include "helper.h"
+#include "exec/helper-proto.h"
+#include "exec/helper-gen.h"
 
 //#define DISABLE_CHAINING_BRANCH
 //#define DISABLE_CHAINING_JAL
@@ -538,9 +538,9 @@ inline static void gen_arith(DisasContext *ctx, uint32_t opc,
         {
             TCGv spec_source1, spec_source2;
             TCGv cond1, cond2;
-            int handle_zero = gen_new_label();
-            int handle_overflow = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *handle_overflow = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
             cond1 = tcg_temp_local_new();
@@ -576,8 +576,8 @@ inline static void gen_arith(DisasContext *ctx, uint32_t opc,
     case OPC_RISC_DIVU:
         {
             TCGv spec_source1, spec_source2;
-            int handle_zero = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
 
@@ -603,9 +603,9 @@ inline static void gen_arith(DisasContext *ctx, uint32_t opc,
         {
             TCGv spec_source1, spec_source2;
             TCGv cond1, cond2;
-            int handle_zero = gen_new_label();
-            int handle_overflow = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *handle_overflow = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
             cond1 = tcg_temp_local_new();
@@ -641,8 +641,8 @@ inline static void gen_arith(DisasContext *ctx, uint32_t opc,
     case OPC_RISC_REMU:
         {
             TCGv spec_source1, spec_source2;
-            int handle_zero = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
 
@@ -819,9 +819,9 @@ inline static void gen_arith_w(DisasContext *ctx, uint32_t opc,
         {
             TCGv spec_source1, spec_source2;
             TCGv cond1, cond2;
-            int handle_zero = gen_new_label();
-            int handle_overflow = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *handle_overflow = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
             cond1 = tcg_temp_local_new();
@@ -861,8 +861,8 @@ inline static void gen_arith_w(DisasContext *ctx, uint32_t opc,
     case OPC_RISC_DIVUW:
         {
             TCGv spec_source1, spec_source2;
-            int handle_zero = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
 
@@ -892,9 +892,9 @@ inline static void gen_arith_w(DisasContext *ctx, uint32_t opc,
         {
             TCGv spec_source1, spec_source2;
             TCGv cond1, cond2;
-            int handle_zero = gen_new_label();
-            int handle_overflow = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *handle_overflow = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
             cond1 = tcg_temp_local_new();
@@ -934,8 +934,8 @@ inline static void gen_arith_w(DisasContext *ctx, uint32_t opc,
     case OPC_RISC_REMUW:
         {
             TCGv spec_source1, spec_source2;
-            int handle_zero = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *handle_zero = gen_new_label();
+            TCGLabel *done = gen_new_label();
             spec_source1 = tcg_temp_local_new();
             spec_source2 = tcg_temp_local_new();
 
@@ -972,7 +972,7 @@ inline static void gen_arith_w(DisasContext *ctx, uint32_t opc,
 inline static void gen_branch(DisasContext *ctx, uint32_t opc, 
                        int rs1, int rs2, int16_t bimm) {
 
-    int l = gen_new_label();
+    TCGLabel *l = gen_new_label();
     TCGv source1, source2;
     source1 = tcg_temp_new();
     source2 = tcg_temp_new();
@@ -1191,8 +1191,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld32s(dat_l, source1_l, ctx->mem_idx);
@@ -1216,8 +1216,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld32s(dat_l, source1_l, ctx->mem_idx);
@@ -1241,8 +1241,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld32s(dat_l, source1_l, ctx->mem_idx);
@@ -1266,8 +1266,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld32s(dat_l, source1_l, ctx->mem_idx);
@@ -1327,8 +1327,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld64(dat_l, source1_l, ctx->mem_idx);
@@ -1352,8 +1352,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld64(dat_l, source1_l, ctx->mem_idx);
@@ -1377,8 +1377,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld64(dat_l, source1_l, ctx->mem_idx);
@@ -1402,8 +1402,8 @@ inline static void gen_atomic(DisasContext *ctx, uint32_t opc,
             source1_l = tcg_temp_local_new();
             source2_l = tcg_temp_local_new();
             dat_l = tcg_temp_local_new();
-            int j = gen_new_label();
-            int done = gen_new_label();
+            TCGLabel *j = gen_new_label();
+            TCGLabel *done = gen_new_label();
             tcg_gen_mov_tl(source1_l, source1);
             tcg_gen_mov_tl(source2_l, source2);
             tcg_gen_qemu_ld64(dat_l, source1_l, ctx->mem_idx);
@@ -2078,7 +2078,6 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
     CPURISCVState *env = &cpu->env;
     DisasContext ctx;
     target_ulong pc_start;
-    uint16_t *gen_opc_end;
     CPUBreakpoint *bp;
     int j, lj = -1;
     int num_insns;
@@ -2087,7 +2086,6 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
         qemu_log("search pc %d\n", search_pc);
     }
     pc_start = tb->pc;
-    gen_opc_end = tcg_ctx.gen_opc_buf + OPC_MAX_SIZE;
     ctx.pc = pc_start;
     ctx.singlestep_enabled = cs->singlestep_enabled;
     ctx.tb = tb;
@@ -2102,7 +2100,7 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
     if (max_insns == 0) {
         max_insns = CF_COUNT_MASK;
     }
-    gen_tb_start();
+    gen_tb_start(tb);
     while (ctx.bstate == BS_NONE) {
         if (unlikely(!QTAILQ_EMPTY(&cs->breakpoints))) {
             QTAILQ_FOREACH(bp, &cs->breakpoints, entry) {
@@ -2119,7 +2117,7 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
         }
 
         if (search_pc) {
-            j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
+            j = tcg_op_buf_count();
             if (lj < j) {
                 lj++;
                 while (lj < j)
@@ -2142,7 +2140,7 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
             // handle tb at the end of a page
             break;
         }
-        if (unlikely(tcg_ctx.gen_opc_ptr >= gen_opc_end)) {
+        if (unlikely(tcg_op_buf_full())) {
             break;
         }
         if (unlikely(num_insns >= max_insns)) {
@@ -2172,9 +2170,9 @@ gen_intermediate_code_internal(RISCVCPU *cpu, TranslationBlock *tb,
     }
 done_generating:
     gen_tb_end(tb, num_insns);
-    *tcg_ctx.gen_opc_ptr = INDEX_op_end;
+
     if (search_pc) {
-        j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;
+        j = tcg_op_buf_count();
         lj++;
         while (lj <= j)
             tcg_ctx.gen_opc_instr_start[lj++] = 0;

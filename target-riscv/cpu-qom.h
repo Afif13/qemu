@@ -69,6 +69,7 @@ static inline RISCVCPU *riscv_env_get_cpu(CPURISCVState *env)
 #define ENV_OFFSET offsetof(RISCVCPU, env)
 
 void riscv_cpu_do_interrupt(CPUState *cpu);
+bool riscv_cpu_exec_interrupt(CPUState *cs, int interrupt_request);
 void riscv_cpu_dump_state(CPUState *cpu, FILE *f, fprintf_function cpu_fprintf,
                          int flags);
 hwaddr riscv_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
