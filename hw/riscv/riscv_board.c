@@ -141,12 +141,9 @@ static void riscv_board_init(MachineState *args)
         env = &cpu->env;
 
         /* Init internal devices */
-        cpu_riscv_irq_init_cpu(env);
         cpu_riscv_clock_init(env);
         qemu_register_reset(main_cpu_reset, cpu);
     }
-    cpu = RISCV_CPU(first_cpu);
-    env = &cpu->env;
 
     /* register system main memory (actual RAM) */
     memory_region_allocate_system_memory(main_mem, NULL, "riscv_board.ram", ram_size);
@@ -180,7 +177,8 @@ static void riscv_board_init(MachineState *args)
     stl_p(memory_region_get_ram_ptr(main_mem), loaderparams.ram_size >> 20);
 
     // add serial device 0x3f8-0x3ff
-    serial_mm_init(system_memory, 0x3f8, 0, env->irq[4], 1843200/16, serial_hds[0],
+    serial_mm_init(system_memory, 0x3f8, 0, qdev_get_gpio_in(DEVICE(first_cpu), 4),
+                   1843200/16, serial_hds[0],
         DEVICE_NATIVE_ENDIAN);
 
 #ifdef CONFIG_RISCV_HTIF
@@ -193,21 +191,17 @@ static void riscv_board_init(MachineState *args)
     }
 
     // add htif device 0x400 - 0x410
-    htif_mm_init(system_memory, 0x400, env->irq[0], main_mem, htifbd_fname);
+    htif_mm_init(system_memory, 0x400, qdev_get_gpio_in(DEVICE(first_cpu), 0), main_mem, htifbd_fname);
 #else
     /* Create MMIO transports, to which virtio backends created by the
      * user are automatically connected as needed.  If no backend is
      * present, the transport simply remains harmlessly idle.
      * Each memory-mapped region is 0x200 bytes in size.
      */
-    sysbus_create_simple("virtio-mmio", 0x400, env->irq[1]);
-    sysbus_create_simple("virtio-mmio", 0x600, env->irq[2]);
-    sysbus_create_simple("virtio-mmio", 0x800, env->irq[3]);
+    sysbus_create_simple("virtio-mmio", 0x400, qdev_get_gpio_in(DEVICE(first_cpu), 1));
+    sysbus_create_simple("virtio-mmio", 0x600, qdev_get_gpio_in(DEVICE(first_cpu), 2));
+    sysbus_create_simple("virtio-mmio", 0x800, qdev_get_gpio_in(DEVICE(first_cpu), 3));
 #endif
-
-    /* Init internal devices */
-    cpu_riscv_irq_init_cpu(env);
-    cpu_riscv_clock_init(env);
 }
 
 static int riscv_board_sysbus_device_init(SysBusDevice *sysbusdev)

@@ -54,7 +54,7 @@ static void cpu_riscv_timer_update(CPURISCVState *env)
 static void cpu_riscv_timer_expire(CPURISCVState *env)
 {
     cpu_riscv_timer_update(env);
-    qemu_irq_raise(env->irq[7]);
+    qemu_irq_raise(qdev_get_gpio_in(DEVICE(first_cpu), 7));
 }
 
 uint32_t cpu_riscv_get_count (CPURISCVState *env)
@@ -79,7 +79,7 @@ void cpu_riscv_store_count (CPURISCVState *env, uint32_t count)
 void cpu_riscv_store_compare (CPURISCVState *env, uint32_t value)
 {
     env->helper_csr[CSR_COMPARE] = value;
-    qemu_irq_lower(env->irq[7]);
+    qemu_irq_lower(qdev_get_gpio_in(DEVICE(first_cpu), 7));
     // according to RISCV spec, any write to compare clears timer interrupt
     cpu_riscv_timer_update(env);
 }
