@@ -75,6 +75,37 @@ static void riscv_cpu_realizefn(DeviceState *dev, Error **errp)
     mcc->parent_realize(dev, errp);
 }
 
+static void riscv_cpu_set_irq(void *opaque, int irq, int level)
+{
+    RISCVCPU *cpu = opaque;
+    CPURISCVState *env = &cpu->env;
+    CPUState *cs = CPU(cpu);
+
+    if (unlikely(irq < 0 || irq > 7)) {
+        return;
+    }
+
+    if (level) {
+        // level high, set the interrupt in CSR_STATUS
+        env->helper_csr[CSR_STATUS] |= (1 << (irq + 24));
+    } else {
+        // level low, turn off the interrupt in CSR_STATUS
+        env->helper_csr[CSR_STATUS] &= ~(1 << (irq + 24));
+    }
+
+    if (env->helper_csr[CSR_STATUS] & (0xFF << (24))) {
+        // call cpu_interrupt from include/qom/cpu.h
+        // this will call cpu_interrupt_handler aka
+        // tcg_handle_interrupt from translate-all.c
+        cpu_interrupt(cs, CPU_INTERRUPT_HARD);
+    } else {
+        // call cpu_reset_interrupt from qom/cpu.c
+        // this just turns off the relevant bits
+        // in cpu->interrupt_request
+        cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+    }
+}
+
 static void riscv_cpu_initfn(Object *obj)
 {
     CPUState *cs = CPU(obj);
@@ -87,6 +118,8 @@ static void riscv_cpu_initfn(Object *obj)
     if (tcg_enabled()) {
         riscv_tcg_init();
     }
+
+    qdev_init_gpio_in(DEVICE(cpu), riscv_cpu_set_irq, 8);
 }
 
 static void riscv_cpu_class_init(ObjectClass *c, void *data)
