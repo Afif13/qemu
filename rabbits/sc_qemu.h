@@ -40,6 +40,7 @@ struct qemu_import {
 struct systemc_import {
     qemu_sc_read_fn  read;
     qemu_sc_write_fn write;
+    qemu_sc_call_rabbits_fn call_rabbits;
 };
 
 struct sc_qemu_init_struct {

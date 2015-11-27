@@ -12,6 +12,8 @@
 
 qemu_context* SC_QEMU_INIT_SYM(sc_qemu_init_struct *s);
 
+qemu_context *Global_context;
+
 typedef struct mmio_ctx mmio_ctx;
 
 struct mmio_ctx {
@@ -153,6 +155,7 @@ qemu_context* SC_QEMU_INIT_SYM(sc_qemu_init_struct *s)
     /* QEMU to SystemC functions */
     memcpy(&(ctx->sysc), &(s->sc_import), sizeof(systemc_import));
 
+    Global_context = ctx;
     return ctx;
 }
 
