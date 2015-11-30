@@ -51,6 +51,9 @@ typedef void (*sc_qemu_qdev_irq_update_fn)(sc_qemu_qdev *dev, int irq_idx, int l
 typedef uint32_t (*qemu_sc_read_fn)(void *opaque, uint32_t addr, uint32_t size);
 typedef void (*qemu_sc_write_fn)(void *opaque, uint32_t addr, uint32_t val, uint32_t size);
 
+//let's us one Call to all the purpose (cache and annotation)
+typedef void (*qemu_sc_call_rabbits_fn)(void *opaque, int call_type,int cpu,unsigned long p1/* define other paramters*/);
+
 typedef sc_qemu_char_dev* (*sc_qemu_char_dev_create_fn)(qemu_context *);
 typedef int (*sc_qemu_char_dev_write_fn)(sc_qemu_char_dev *dev, const uint8_t *data, int len);
 typedef void (*sc_qemu_char_dev_read_fn)(void *opaque, const uint8_t *data, int len);
