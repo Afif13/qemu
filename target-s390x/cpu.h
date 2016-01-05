@@ -27,7 +27,6 @@
 
 #define TARGET_LONG_BITS 64
 
-#define ELF_MACHINE	EM_S390
 #define ELF_MACHINE_UNAME "S390X"
 
 #define CPUArchState struct CPUS390XState
@@ -43,6 +42,7 @@
 #include "fpu/softfloat.h"
 
 #define NB_MMU_MODES 3
+#define TARGET_INSN_START_EXTRA_WORDS 1
 
 #define MMU_MODE0_SUFFIX _primary
 #define MMU_MODE1_SUFFIX _secondary
@@ -111,6 +111,9 @@ typedef struct CPUS390XState {
     uint32_t int_svc_code;
     uint32_t int_svc_ilen;
 
+    uint64_t per_address;
+    uint16_t per_perc_atmid;
+
     uint64_t cregs[16]; /* control registers */
 
     ExtQueue ext_queue[MAX_EXT_QUEUE];
@@ -139,8 +142,6 @@ typedef struct CPUS390XState {
 
     uint32_t cpu_num;
     uint32_t machine_type;
-
-    uint8_t *storage_keys;
 
     uint64_t tod_offset;
     uint64_t tod_basetime;
@@ -307,7 +308,7 @@ static inline CPU_DoubleU *get_freg(CPUS390XState *cs, int nr)
 #define MMU_SECONDARY_IDX       1
 #define MMU_HOME_IDX            2
 
-static inline int cpu_mmu_index (CPUS390XState *env)
+static inline int cpu_mmu_index (CPUS390XState *env, bool ifetch)
 {
     switch (env->psw.mask & PSW_MASK_ASC) {
     case PSW_ASC_PRIMARY:
@@ -364,6 +365,45 @@ static inline int get_ilen(uint8_t opc)
     }
 }
 
+/* PER bits from control register 9 */
+#define PER_CR9_EVENT_BRANCH           0x80000000
+#define PER_CR9_EVENT_IFETCH           0x40000000
+#define PER_CR9_EVENT_STORE            0x20000000
+#define PER_CR9_EVENT_STORE_REAL       0x08000000
+#define PER_CR9_EVENT_NULLIFICATION    0x01000000
+#define PER_CR9_CONTROL_BRANCH_ADDRESS 0x00800000
+#define PER_CR9_CONTROL_ALTERATION     0x00200000
+
+/* PER bits from the PER CODE/ATMID/AI in lowcore */
+#define PER_CODE_EVENT_BRANCH          0x8000
+#define PER_CODE_EVENT_IFETCH          0x4000
+#define PER_CODE_EVENT_STORE           0x2000
+#define PER_CODE_EVENT_STORE_REAL      0x0800
+#define PER_CODE_EVENT_NULLIFICATION   0x0100
+
+/* Compute the ATMID field that is stored in the per_perc_atmid lowcore
+   entry when a PER exception is triggered.  */
+static inline uint8_t get_per_atmid(CPUS390XState *env)
+{
+    return ((env->psw.mask & PSW_MASK_64) ?      (1 << 7) : 0) |
+           (                                     (1 << 6)    ) |
+           ((env->psw.mask & PSW_MASK_32) ?      (1 << 5) : 0) |
+           ((env->psw.mask & PSW_MASK_DAT)?      (1 << 4) : 0) |
+           ((env->psw.mask & PSW_ASC_SECONDARY)? (1 << 3) : 0) |
+           ((env->psw.mask & PSW_ASC_ACCREG)?    (1 << 2) : 0);
+}
+
+/* Check if an address is within the PER starting address and the PER
+   ending address.  The address range might loop.  */
+static inline bool get_per_in_range(CPUS390XState *env, uint64_t addr)
+{
+    if (env->cregs[10] <= env->cregs[11]) {
+        return env->cregs[10] <= addr && addr <= env->cregs[11];
+    } else {
+        return env->cregs[10] <= addr || addr <= env->cregs[11];
+    }
+}
+
 #ifndef CONFIG_USER_ONLY
 /* In several cases of runtime exceptions, we havn't recorded the true
    instruction length.  Use these codes when raising exceptions in order
@@ -375,7 +415,7 @@ void trigger_pgm_exception(CPUS390XState *env, uint32_t code, uint32_t ilen);
 
 S390CPU *cpu_s390x_init(const char *cpu_model);
 void s390x_translate_init(void);
-int cpu_s390x_exec(CPUS390XState *s);
+int cpu_s390x_exec(CPUState *cpu);
 
 /* you can call this signal handler from your SIGBUS and SIGSEGV
    signal handlers to inform the virtual CPU of exceptions. non zero
@@ -529,7 +569,7 @@ void cpu_unlock(void);
 typedef struct SubchDev SubchDev;
 
 #ifndef CONFIG_USER_ONLY
-extern void io_subsystem_reset(void);
+extern void subsystem_reset(void);
 SubchDev *css_find_subch(uint8_t m, uint8_t cssid, uint8_t ssid,
                          uint16_t schid);
 bool css_subch_visible(SubchDev *sch);
@@ -558,7 +598,6 @@ bool css_present(uint8_t cssid);
 
 #define cpu_init(model) CPU(cpu_s390x_init(model))
 #define cpu_exec cpu_s390x_exec
-#define cpu_gen_code cpu_s390x_gen_code
 #define cpu_signal_handler cpu_s390x_signal_handler
 
 void s390_cpu_list(FILE *f, fprintf_function cpu_fprintf);
@@ -709,6 +748,7 @@ static inline void setcc(S390CPU *cpu, uint64_t cc)
 
     env->psw.mask &= ~(3ull << 44);
     env->psw.mask |= (cc & 3) << 44;
+    env->cc_op = cc;
 }
 
 typedef struct LowCore
@@ -746,14 +786,16 @@ typedef struct LowCore
     uint8_t         pad5[0xf4-0xf0];          /* 0x0f0 */
     uint32_t        external_damage_code;     /* 0x0f4 */
     uint64_t        failing_storage_address;  /* 0x0f8 */
-    uint8_t         pad6[0x120-0x100];        /* 0x100 */
+    uint8_t         pad6[0x110-0x100];        /* 0x100 */
+    uint64_t        per_breaking_event_addr;  /* 0x110 */
+    uint8_t         pad7[0x120-0x118];        /* 0x118 */
     PSW             restart_old_psw;          /* 0x120 */
     PSW             external_old_psw;         /* 0x130 */
     PSW             svc_old_psw;              /* 0x140 */
     PSW             program_old_psw;          /* 0x150 */
     PSW             mcck_old_psw;             /* 0x160 */
     PSW             io_old_psw;               /* 0x170 */
-    uint8_t         pad7[0x1a0-0x180];        /* 0x180 */
+    uint8_t         pad8[0x1a0-0x180];        /* 0x180 */
     PSW             restart_new_psw;          /* 0x1a0 */
     PSW             external_new_psw;         /* 0x1b0 */
     PSW             svc_new_psw;              /* 0x1c0 */
@@ -771,10 +813,10 @@ typedef struct LowCore
     uint64_t        last_update_clock;        /* 0x280 */
     uint64_t        steal_clock;              /* 0x288 */
     PSW             return_mcck_psw;          /* 0x290 */
-    uint8_t         pad8[0xc00-0x2a0];        /* 0x2a0 */
+    uint8_t         pad9[0xc00-0x2a0];        /* 0x2a0 */
     /* System info area */
     uint64_t        save_area[16];            /* 0xc00 */
-    uint8_t         pad9[0xd40-0xc80];        /* 0xc80 */
+    uint8_t         pad10[0xd40-0xc80];       /* 0xc80 */
     uint64_t        kernel_stack;             /* 0xd40 */
     uint64_t        thread_info;              /* 0xd48 */
     uint64_t        async_stack;              /* 0xd50 */
@@ -782,7 +824,7 @@ typedef struct LowCore
     uint64_t        user_asce;                /* 0xd60 */
     uint64_t        panic_stack;              /* 0xd68 */
     uint64_t        user_exec_asce;           /* 0xd70 */
-    uint8_t         pad10[0xdc0-0xd78];       /* 0xd78 */
+    uint8_t         pad11[0xdc0-0xd78];       /* 0xd78 */
 
     /* SMP info area: defined by DJB */
     uint64_t        clock_comparator;         /* 0xdc0 */
@@ -1002,6 +1044,7 @@ int mmu_translate(CPUS390XState *env, target_ulong vaddr, int rw, uint64_t asc,
 int sclp_service_call(CPUS390XState *env, uint64_t sccb, uint32_t code);
 uint32_t calc_cc(CPUS390XState *env, uint32_t cc_op, uint64_t src, uint64_t dst,
                  uint64_t vr);
+void s390_cpu_recompute_watchpoints(CPUState *cs);
 
 int s390_cpu_virt_mem_rw(S390CPU *cpu, vaddr laddr, uint8_t ar, void *hostbuf,
                          int len, bool is_write);
@@ -1100,6 +1143,7 @@ uint32_t set_cc_nz_f128(float128 v);
 
 /* misc_helper.c */
 #ifndef CONFIG_USER_ONLY
+int handle_diag_288(CPUS390XState *env, uint64_t r1, uint64_t r3);
 void handle_diag_308(CPUS390XState *env, uint64_t r1, uint64_t r3);
 #endif
 void program_interrupt(CPUS390XState *env, uint32_t code, int ilen);
@@ -1116,12 +1160,13 @@ int kvm_s390_assign_subch_ioeventfd(EventNotifier *notifier, uint32_t sch,
                                     int vq, bool assign);
 int kvm_s390_cpu_restart(S390CPU *cpu);
 int kvm_s390_get_memslot_count(KVMState *s);
-void kvm_s390_clear_cmma_callback(void *opaque);
+void kvm_s390_cmma_reset(void);
 int kvm_s390_set_cpu_state(S390CPU *cpu, uint8_t cpu_state);
 void kvm_s390_reset_vcpu(S390CPU *cpu);
 int kvm_s390_set_mem_limit(KVMState *s, uint64_t new_limit, uint64_t *hw_limit);
 void kvm_s390_vcpu_interrupt_pre_save(S390CPU *cpu);
 int kvm_s390_vcpu_interrupt_post_load(S390CPU *cpu);
+void kvm_s390_crypto_reset(void);
 #else
 static inline void kvm_s390_io_interrupt(uint16_t subchannel_id,
                                         uint16_t subchannel_nr,
@@ -1145,7 +1190,7 @@ static inline int kvm_s390_cpu_restart(S390CPU *cpu)
 {
     return -ENOSYS;
 }
-static inline void kvm_s390_clear_cmma_callback(void *opaque)
+static inline void kvm_s390_cmma_reset(void)
 {
 }
 static inline int kvm_s390_get_memslot_count(KVMState *s)
@@ -1171,6 +1216,9 @@ static inline int kvm_s390_vcpu_interrupt_post_load(S390CPU *cpu)
 {
     return 0;
 }
+static inline void kvm_s390_crypto_reset(void)
+{
+}
 #endif
 
 static inline int s390_set_memory_limit(uint64_t new_limit, uint64_t *hw_limit)
@@ -1181,11 +1229,10 @@ static inline int s390_set_memory_limit(uint64_t new_limit, uint64_t *hw_limit)
     return 0;
 }
 
-static inline void cmma_reset(S390CPU *cpu)
+static inline void s390_cmma_reset(void)
 {
     if (kvm_enabled()) {
-        CPUState *cs = CPU(cpu);
-        kvm_s390_clear_cmma_callback(cs->kvm_state);
+        kvm_s390_cmma_reset();
     }
 }
 
@@ -1214,10 +1261,13 @@ static inline int s390_assign_subch_ioeventfd(EventNotifier *notifier,
                                               uint32_t sch_id, int vq,
                                               bool assign)
 {
+    return kvm_s390_assign_subch_ioeventfd(notifier, sch_id, vq, assign);
+}
+
+static inline void s390_crypto_reset(void)
+{
     if (kvm_enabled()) {
-        return kvm_s390_assign_subch_ioeventfd(notifier, sch_id, vq, assign);
-    } else {
-        return -ENOSYS;
+        kvm_s390_crypto_reset();
     }
 }
 
@@ -1235,4 +1285,49 @@ static inline bool vregs_needed(void *opaque)
     return 0;
 }
 #endif
+
+/* machine check interruption code */
+
+/* subclasses */
+#define MCIC_SC_SD 0x8000000000000000ULL
+#define MCIC_SC_PD 0x4000000000000000ULL
+#define MCIC_SC_SR 0x2000000000000000ULL
+#define MCIC_SC_CD 0x0800000000000000ULL
+#define MCIC_SC_ED 0x0400000000000000ULL
+#define MCIC_SC_DG 0x0100000000000000ULL
+#define MCIC_SC_W  0x0080000000000000ULL
+#define MCIC_SC_CP 0x0040000000000000ULL
+#define MCIC_SC_SP 0x0020000000000000ULL
+#define MCIC_SC_CK 0x0010000000000000ULL
+
+/* subclass modifiers */
+#define MCIC_SCM_B  0x0002000000000000ULL
+#define MCIC_SCM_DA 0x0000000020000000ULL
+#define MCIC_SCM_AP 0x0000000000080000ULL
+
+/* storage errors */
+#define MCIC_SE_SE 0x0000800000000000ULL
+#define MCIC_SE_SC 0x0000400000000000ULL
+#define MCIC_SE_KE 0x0000200000000000ULL
+#define MCIC_SE_DS 0x0000100000000000ULL
+#define MCIC_SE_IE 0x0000000080000000ULL
+
+/* validity bits */
+#define MCIC_VB_WP 0x0000080000000000ULL
+#define MCIC_VB_MS 0x0000040000000000ULL
+#define MCIC_VB_PM 0x0000020000000000ULL
+#define MCIC_VB_IA 0x0000010000000000ULL
+#define MCIC_VB_FA 0x0000008000000000ULL
+#define MCIC_VB_VR 0x0000004000000000ULL
+#define MCIC_VB_EC 0x0000002000000000ULL
+#define MCIC_VB_FP 0x0000001000000000ULL
+#define MCIC_VB_GR 0x0000000800000000ULL
+#define MCIC_VB_CR 0x0000000400000000ULL
+#define MCIC_VB_ST 0x0000000100000000ULL
+#define MCIC_VB_AR 0x0000000040000000ULL
+#define MCIC_VB_PR 0x0000000000200000ULL
+#define MCIC_VB_FC 0x0000000000100000ULL
+#define MCIC_VB_CT 0x0000000000020000ULL
+#define MCIC_VB_CC 0x0000000000010000ULL
+
 #endif

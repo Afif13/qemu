@@ -22,14 +22,23 @@
 #include "hw/intc/arm_gic.h"
 #include "hw/net/cadence_gem.h"
 #include "hw/char/cadence_uart.h"
+#include "hw/ide/pci.h"
+#include "hw/ide/ahci.h"
+#include "hw/sd/sdhci.h"
 
 #define TYPE_XLNX_ZYNQMP "xlnx,zynqmp"
 #define XLNX_ZYNQMP(obj) OBJECT_CHECK(XlnxZynqMPState, (obj), \
                                        TYPE_XLNX_ZYNQMP)
 
-#define XLNX_ZYNQMP_NUM_CPUS 4
+#define XLNX_ZYNQMP_NUM_APU_CPUS 4
+#define XLNX_ZYNQMP_NUM_RPU_CPUS 2
 #define XLNX_ZYNQMP_NUM_GEMS 4
 #define XLNX_ZYNQMP_NUM_UARTS 2
+#define XLNX_ZYNQMP_NUM_SDHCI 2
+
+#define XLNX_ZYNQMP_NUM_OCM_BANKS 4
+#define XLNX_ZYNQMP_OCM_RAM_0_ADDRESS 0xFFFC0000
+#define XLNX_ZYNQMP_OCM_RAM_SIZE 0x10000
 
 #define XLNX_ZYNQMP_GIC_REGIONS 2
 
@@ -39,7 +48,7 @@
  * number of memory region aliases.
  */
 
-#define XLNX_ZYNQMP_GIC_REGION_SIZE 0x4000
+#define XLNX_ZYNQMP_GIC_REGION_SIZE 0x1000
 #define XLNX_ZYNQMP_GIC_ALIASES     (0x10000 / XLNX_ZYNQMP_GIC_REGION_SIZE - 1)
 
 typedef struct XlnxZynqMPState {
@@ -47,11 +56,19 @@ typedef struct XlnxZynqMPState {
     DeviceState parent_obj;
 
     /*< public >*/
-    ARMCPU cpu[XLNX_ZYNQMP_NUM_CPUS];
+    ARMCPU apu_cpu[XLNX_ZYNQMP_NUM_APU_CPUS];
+    ARMCPU rpu_cpu[XLNX_ZYNQMP_NUM_RPU_CPUS];
     GICState gic;
     MemoryRegion gic_mr[XLNX_ZYNQMP_GIC_REGIONS][XLNX_ZYNQMP_GIC_ALIASES];
+    MemoryRegion ocm_ram[XLNX_ZYNQMP_NUM_OCM_BANKS];
+
     CadenceGEMState gem[XLNX_ZYNQMP_NUM_GEMS];
     CadenceUARTState uart[XLNX_ZYNQMP_NUM_UARTS];
+    SysbusAHCIState sata;
+    SDHCIState sdhci[XLNX_ZYNQMP_NUM_SDHCI];
+
+    char *boot_cpu;
+    ARMCPU *boot_cpu_ptr;
 }  XlnxZynqMPState;
 
 #define XLNX_ZYNQMP_H

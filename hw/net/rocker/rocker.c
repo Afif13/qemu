@@ -94,6 +94,50 @@ World *rocker_get_world(Rocker *r, enum rocker_world_type type)
     return NULL;
 }
 
+RockerSwitch *qmp_query_rocker(const char *name, Error **errp)
+{
+    RockerSwitch *rocker;
+    Rocker *r;
+
+    r = rocker_find(name);
+    if (!r) {
+        error_setg(errp, "rocker %s not found", name);
+        return NULL;
+    }
+
+    rocker = g_new0(RockerSwitch, 1);
+    rocker->name = g_strdup(r->name);
+    rocker->id = r->switch_id;
+    rocker->ports = r->fp_ports;
+
+    return rocker;
+}
+
+RockerPortList *qmp_query_rocker_ports(const char *name, Error **errp)
+{
+    RockerPortList *list = NULL;
+    Rocker *r;
+    int i;
+
+    r = rocker_find(name);
+    if (!r) {
+        error_setg(errp, "rocker %s not found", name);
+        return NULL;
+    }
+
+    for (i = r->fp_ports - 1; i >= 0; i--) {
+        RockerPortList *info = g_malloc0(sizeof(*info));
+        info->value = g_malloc0(sizeof(*info->value));
+        struct fp_port *port = r->fp_port[i];
+
+        fp_port_get_info(port, info);
+        info->next = list;
+        list = info;
+    }
+
+    return list;
+}
+
 uint32_t rocker_fp_ports(Rocker *r)
 {
     return r->fp_ports;
@@ -147,11 +191,13 @@ static int tx_consume(Rocker *r, DescInfo *info)
         if (!tlvs[ROCKER_TLV_TX_L3_CSUM_OFF]) {
             return -ROCKER_EINVAL;
         }
+        break;
     case ROCKER_TX_OFFLOAD_TSO:
         if (!tlvs[ROCKER_TLV_TX_TSO_MSS] ||
             !tlvs[ROCKER_TLV_TX_TSO_HDR_LEN]) {
             return -ROCKER_EINVAL;
         }
+        break;
     }
 
     if (tlvs[ROCKER_TLV_TX_L3_CSUM_OFF]) {
@@ -217,9 +263,7 @@ err_bad_io:
 err_no_mem:
 err_bad_attr:
     for (i = 0; i < ROCKER_TX_FRAGS_MAX; i++) {
-        if (iov[i].iov_base) {
-            g_free(iov[i].iov_base);
-        }
+        g_free(iov[i].iov_base);
     }
 
     return err;
@@ -238,6 +282,7 @@ static int cmd_get_port_settings(Rocker *r,
     uint8_t duplex;
     uint8_t autoneg;
     uint8_t learning;
+    char *phys_name;
     MACAddr macaddr;
     enum rocker_world_type mode;
     size_t tlv_size;
@@ -265,6 +310,7 @@ static int cmd_get_port_settings(Rocker *r,
     fp_port_get_macaddr(fp_port, &macaddr);
     mode = world_type(fp_port_get_world(fp_port));
     learning = fp_port_get_learning(fp_port);
+    phys_name = fp_port_get_name(fp_port);
 
     tlv_size = rocker_tlv_total_size(0) +                 /* nest */
                rocker_tlv_total_size(sizeof(uint32_t)) +  /*   pport */
@@ -273,7 +319,8 @@ static int cmd_get_port_settings(Rocker *r,
                rocker_tlv_total_size(sizeof(uint8_t)) +   /*   autoneg */
                rocker_tlv_total_size(sizeof(macaddr.a)) + /*   macaddr */
                rocker_tlv_total_size(sizeof(uint8_t)) +   /*   mode */
-               rocker_tlv_total_size(sizeof(uint8_t));    /*   learning */
+               rocker_tlv_total_size(sizeof(uint8_t)) +   /*   learning */
+               rocker_tlv_total_size(strlen(phys_name));
 
     if (tlv_size > desc_buf_size(info)) {
         return -ROCKER_EMSGSIZE;
@@ -290,6 +337,8 @@ static int cmd_get_port_settings(Rocker *r,
     rocker_tlv_put_u8(buf, &pos, ROCKER_TLV_CMD_PORT_SETTINGS_MODE, mode);
     rocker_tlv_put_u8(buf, &pos, ROCKER_TLV_CMD_PORT_SETTINGS_LEARNING,
                       learning);
+    rocker_tlv_put(buf, &pos, ROCKER_TLV_CMD_PORT_SETTINGS_PHYS_NAME,
+                   strlen(phys_name), phys_name);
     rocker_tlv_nest_end(buf, &pos, nest);
 
     return desc_set_buf(info, tlv_size);
@@ -550,7 +599,7 @@ static DescRing *rocker_get_rx_ring_by_pport(Rocker *r,
 }
 
 int rx_produce(World *world, uint32_t pport,
-               const struct iovec *iov, int iovcnt)
+               const struct iovec *iov, int iovcnt, uint8_t copy_to_cpu)
 {
     Rocker *r = world_rocker(world);
     PCIDevice *dev = (PCIDevice *)r;
@@ -591,6 +640,10 @@ int rx_produce(World *world, uint32_t pport,
     if (data_size > frag_max_len) {
         err = -ROCKER_EMSGSIZE;
         goto out;
+    }
+
+    if (copy_to_cpu) {
+        rx_flags |= ROCKER_RX_FLAGS_FWD_OFFLOAD;
     }
 
     /* XXX calc rx flags/csum */
@@ -1277,6 +1330,22 @@ static int pci_rocker_init(PCIDevice *dev)
         goto err_duplicate;
     }
 
+    /* Rocker name is passed in port name requests to OS with the intention
+     * that the name is used in interface names. Limit the length of the
+     * rocker name to avoid naming problems in the OS. Also, adding the
+     * port number as p# and unganged breakout b#, where # is at most 2
+     * digits, so leave room for it too (-1 for string terminator, -3 for
+     * p# and -3 for b#)
+     */
+#define ROCKER_IFNAMSIZ 16
+#define MAX_ROCKER_NAME_LEN  (ROCKER_IFNAMSIZ - 1 - 3 - 3)
+    if (strlen(r->name) > MAX_ROCKER_NAME_LEN) {
+        fprintf(stderr,
+                "rocker: name too long; please shorten to at most %d chars\n",
+                MAX_ROCKER_NAME_LEN);
+        return -EINVAL;
+    }
+
     if (memcmp(&r->fp_start_macaddr, &zero, sizeof(zero)) == 0) {
         memcpy(&r->fp_start_macaddr, &dflt, sizeof(dflt));
         r->fp_start_macaddr.a[4] += (sw_index++);
@@ -1291,7 +1360,7 @@ static int pci_rocker_init(PCIDevice *dev)
         r->fp_ports = ROCKER_FP_PORTS_MAX;
     }
 
-    r->rings = g_malloc(sizeof(DescRing *) * rocker_pci_ring_count(r));
+    r->rings = g_new(DescRing *, rocker_pci_ring_count(r));
     if (!r->rings) {
         goto err_rings_alloc;
     }

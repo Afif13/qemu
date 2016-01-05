@@ -2,13 +2,11 @@
 #define MONITOR_H
 
 #include "qemu-common.h"
-#include "qapi/qmp/qerror.h"
 #include "qapi/qmp/qdict.h"
 #include "block/block.h"
 #include "qemu/readline.h"
 
 extern Monitor *cur_mon;
-extern Monitor *default_mon;
 
 /* flags for monitor_init */
 #define MONITOR_IS_DEFAULT    0x01
@@ -36,19 +34,15 @@ int monitor_fd_param(Monitor *mon, const char *fdname, Error **errp);
 void monitor_vprintf(Monitor *mon, const char *fmt, va_list ap)
     GCC_FMT_ATTR(2, 0);
 void monitor_printf(Monitor *mon, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
+int monitor_fprintf(FILE *stream, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
 void monitor_flush(Monitor *mon);
 int monitor_set_cpu(int cpu_index);
 int monitor_get_cpu_index(void);
 
-void monitor_set_error(Monitor *mon, QError *qerror);
 void monitor_read_command(Monitor *mon, int show_prompt);
 int monitor_read_password(Monitor *mon, ReadLineFunc *readline_func,
                           void *opaque);
 
-int qmp_qom_set(Monitor *mon, const QDict *qdict, QObject **ret);
-
-int qmp_qom_get(Monitor *mon, const QDict *qdict, QObject **ret);
-int qmp_object_add(Monitor *mon, const QDict *qdict, QObject **ret);
 void object_add(const char *type, const char *id, const QDict *qdict,
                 Visitor *v, Error **errp);
 

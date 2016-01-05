@@ -43,6 +43,7 @@
 #include "hw/pci/pci.h"
 
 #define ARM_SPI_BASE 32
+#define ACPI_POWER_BUTTON_DEVICE "PWRB"
 
 typedef struct VirtAcpiCpuInfo {
     DECLARE_BITMAP(found_cpus, VIRT_ACPI_CPU_ID_LIMIT);
@@ -71,7 +72,7 @@ static void acpi_dsdt_add_cpus(Aml *scope, int smp_cpus)
 }
 
 static void acpi_dsdt_add_uart(Aml *scope, const MemMapEntry *uart_memmap,
-                                           int uart_irq)
+                                           uint32_t uart_irq)
 {
     Aml *dev = aml_device("COM0");
     aml_append(dev, aml_name_decl("_HID", aml_string("ARMH0011")));
@@ -82,13 +83,19 @@ static void acpi_dsdt_add_uart(Aml *scope, const MemMapEntry *uart_memmap,
                                        uart_memmap->size, AML_READ_WRITE));
     aml_append(crs,
                aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
-                             AML_EXCLUSIVE, uart_irq));
+                             AML_EXCLUSIVE, &uart_irq, 1));
     aml_append(dev, aml_name_decl("_CRS", crs));
+
+    /* The _ADR entry is used to link this device to the UART described
+     * in the SPCR table, i.e. SPCR.base_address.address == _ADR.
+     */
+    aml_append(dev, aml_name_decl("_ADR", aml_int(uart_memmap->base)));
+
     aml_append(scope, dev);
 }
 
 static void acpi_dsdt_add_rtc(Aml *scope, const MemMapEntry *rtc_memmap,
-                                          int rtc_irq)
+                                          uint32_t rtc_irq)
 {
     Aml *dev = aml_device("RTC0");
     aml_append(dev, aml_name_decl("_HID", aml_string("LNRO0013")));
@@ -99,7 +106,7 @@ static void acpi_dsdt_add_rtc(Aml *scope, const MemMapEntry *rtc_memmap,
                                        rtc_memmap->size, AML_READ_WRITE));
     aml_append(crs,
                aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
-                             AML_EXCLUSIVE, rtc_irq));
+                             AML_EXCLUSIVE, &rtc_irq, 1));
     aml_append(dev, aml_name_decl("_CRS", crs));
     aml_append(scope, dev);
 }
@@ -108,7 +115,7 @@ static void acpi_dsdt_add_flash(Aml *scope, const MemMapEntry *flash_memmap)
 {
     Aml *dev, *crs;
     hwaddr base = flash_memmap->base;
-    hwaddr size = flash_memmap->size;
+    hwaddr size = flash_memmap->size / 2;
 
     dev = aml_device("FLS0");
     aml_append(dev, aml_name_decl("_HID", aml_string("LNRO0015")));
@@ -130,14 +137,14 @@ static void acpi_dsdt_add_flash(Aml *scope, const MemMapEntry *flash_memmap)
 
 static void acpi_dsdt_add_virtio(Aml *scope,
                                  const MemMapEntry *virtio_mmio_memmap,
-                                 int mmio_irq, int num)
+                                 uint32_t mmio_irq, int num)
 {
     hwaddr base = virtio_mmio_memmap->base;
     hwaddr size = virtio_mmio_memmap->size;
-    int irq = mmio_irq;
     int i;
 
     for (i = 0; i < num; i++) {
+        uint32_t irq = mmio_irq + i;
         Aml *dev = aml_device("VR%02u", i);
         aml_append(dev, aml_name_decl("_HID", aml_string("LNRO0005")));
         aml_append(dev, aml_name_decl("_UID", aml_int(i)));
@@ -146,14 +153,15 @@ static void acpi_dsdt_add_virtio(Aml *scope,
         aml_append(crs, aml_memory32_fixed(base, size, AML_READ_WRITE));
         aml_append(crs,
                    aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
-                                 AML_EXCLUSIVE, irq + i));
+                                 AML_EXCLUSIVE, &irq, 1));
         aml_append(dev, aml_name_decl("_CRS", crs));
         aml_append(scope, dev);
         base += size;
     }
 }
 
-static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
+static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap,
+                              uint32_t irq, bool use_highmem)
 {
     Aml *method, *crs, *ifctx, *UUID, *ifctx1, *elsectx, *buf;
     int i, bus_no;
@@ -173,6 +181,7 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
     aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
     aml_append(dev, aml_name_decl("_UID", aml_string("PCI0")));
     aml_append(dev, aml_name_decl("_STR", aml_unicode("PCIe 0 Device")));
+    aml_append(dev, aml_name_decl("_CCA", aml_int(1)));
 
     /* Declare the PCI Routing Table. */
     Aml *rt_pkg = aml_package(nr_pcie_buses * PCI_NUM_PINS);
@@ -191,29 +200,30 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
 
     /* Create GSI link device */
     for (i = 0; i < PCI_NUM_PINS; i++) {
+        uint32_t irqs =  irq + i;
         Aml *dev_gsi = aml_device("GSI%d", i);
         aml_append(dev_gsi, aml_name_decl("_HID", aml_string("PNP0C0F")));
         aml_append(dev_gsi, aml_name_decl("_UID", aml_int(0)));
         crs = aml_resource_template();
         aml_append(crs,
                    aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
-                                 AML_EXCLUSIVE, irq + i));
+                                 AML_EXCLUSIVE, &irqs, 1));
         aml_append(dev_gsi, aml_name_decl("_PRS", crs));
         crs = aml_resource_template();
         aml_append(crs,
                    aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
-                                 AML_EXCLUSIVE, irq + i));
+                                 AML_EXCLUSIVE, &irqs, 1));
         aml_append(dev_gsi, aml_name_decl("_CRS", crs));
-        method = aml_method("_SRS", 1);
+        method = aml_method("_SRS", 1, AML_NOTSERIALIZED);
         aml_append(dev_gsi, method);
         aml_append(dev, dev_gsi);
     }
 
-    method = aml_method("_CBA", 0);
+    method = aml_method("_CBA", 0, AML_NOTSERIALIZED);
     aml_append(method, aml_return(aml_int(base_ecam)));
     aml_append(dev, method);
 
-    method = aml_method("_CRS", 0);
+    method = aml_method("_CRS", 0, AML_NOTSERIALIZED);
     Aml *rbuf = aml_resource_template();
     aml_append(rbuf,
         aml_word_bus_number(AML_MIN_FIXED, AML_MAX_FIXED, AML_POS_DECODE,
@@ -228,6 +238,17 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
                      AML_ENTIRE_RANGE, 0x0000, 0x0000, size_pio - 1, base_pio,
                      size_pio));
 
+    if (use_highmem) {
+        hwaddr base_mmio_high = memmap[VIRT_PCIE_MMIO_HIGH].base;
+        hwaddr size_mmio_high = memmap[VIRT_PCIE_MMIO_HIGH].size;
+
+        aml_append(rbuf,
+            aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED, AML_MAX_FIXED,
+                             AML_NON_CACHEABLE, AML_READ_WRITE, 0x0000,
+                             base_mmio_high, base_mmio_high, 0x0000,
+                             size_mmio_high));
+    }
+
     aml_append(method, aml_name_decl("RBUF", rbuf));
     aml_append(method, aml_return(rbuf));
     aml_append(dev, method);
@@ -235,7 +256,7 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
     /* Declare an _OSC (OS Control Handoff) method */
     aml_append(dev, aml_name_decl("SUPP", aml_int(0)));
     aml_append(dev, aml_name_decl("CTRL", aml_int(0)));
-    method = aml_method("_OSC", 4);
+    method = aml_method("_OSC", 4, AML_NOTSERIALIZED);
     aml_append(method,
         aml_create_dword_field(aml_arg(3), aml_int(0), "CDW1"));
 
@@ -253,16 +274,16 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
         aml_create_dword_field(aml_arg(3), aml_int(8), "CDW3"));
     aml_append(ifctx, aml_store(aml_name("CDW2"), aml_name("SUPP")));
     aml_append(ifctx, aml_store(aml_name("CDW3"), aml_name("CTRL")));
-    aml_append(ifctx, aml_store(aml_and(aml_name("CTRL"), aml_int(0x1D)),
+    aml_append(ifctx, aml_store(aml_and(aml_name("CTRL"), aml_int(0x1D), NULL),
                                 aml_name("CTRL")));
 
     ifctx1 = aml_if(aml_lnot(aml_equal(aml_arg(1), aml_int(0x1))));
-    aml_append(ifctx1, aml_store(aml_or(aml_name("CDW1"), aml_int(0x08)),
+    aml_append(ifctx1, aml_store(aml_or(aml_name("CDW1"), aml_int(0x08), NULL),
                                  aml_name("CDW1")));
     aml_append(ifctx, ifctx1);
 
     ifctx1 = aml_if(aml_lnot(aml_equal(aml_name("CDW3"), aml_name("CTRL"))));
-    aml_append(ifctx1, aml_store(aml_or(aml_name("CDW1"), aml_int(0x10)),
+    aml_append(ifctx1, aml_store(aml_or(aml_name("CDW1"), aml_int(0x10), NULL),
                                  aml_name("CDW1")));
     aml_append(ifctx, ifctx1);
 
@@ -271,13 +292,13 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
     aml_append(method, ifctx);
 
     elsectx = aml_else();
-    aml_append(elsectx, aml_store(aml_or(aml_name("CDW1"), aml_int(4)),
+    aml_append(elsectx, aml_store(aml_or(aml_name("CDW1"), aml_int(4), NULL),
                                   aml_name("CDW1")));
     aml_append(elsectx, aml_return(aml_arg(3)));
     aml_append(method, elsectx);
     aml_append(dev, method);
 
-    method = aml_method("_DSM", 4);
+    method = aml_method("_DSM", 4, AML_NOTSERIALIZED);
 
     /* PCI Firmware Specification 3.0
      * 4.6.1. _DSM for PCI Express Slot Information
@@ -301,6 +322,46 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap, int irq)
     Aml *dev_rp0 = aml_device("%s", "RP0");
     aml_append(dev_rp0, aml_name_decl("_ADR", aml_int(0)));
     aml_append(dev, dev_rp0);
+    aml_append(scope, dev);
+}
+
+static void acpi_dsdt_add_gpio(Aml *scope, const MemMapEntry *gpio_memmap,
+                                           uint32_t gpio_irq)
+{
+    Aml *dev = aml_device("GPO0");
+    aml_append(dev, aml_name_decl("_HID", aml_string("ARMH0061")));
+    aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
+    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
+
+    Aml *crs = aml_resource_template();
+    aml_append(crs, aml_memory32_fixed(gpio_memmap->base, gpio_memmap->size,
+                                       AML_READ_WRITE));
+    aml_append(crs, aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
+                                  AML_EXCLUSIVE, &gpio_irq, 1));
+    aml_append(dev, aml_name_decl("_CRS", crs));
+
+    Aml *aei = aml_resource_template();
+    /* Pin 3 for power button */
+    const uint32_t pin_list[1] = {3};
+    aml_append(aei, aml_gpio_int(AML_CONSUMER, AML_EDGE, AML_ACTIVE_HIGH,
+                                 AML_EXCLUSIVE, AML_PULL_UP, 0, pin_list, 1,
+                                 "GPO0", NULL, 0));
+    aml_append(dev, aml_name_decl("_AEI", aei));
+
+    /* _E03 is handle for power button */
+    Aml *method = aml_method("_E03", 0, AML_NOTSERIALIZED);
+    aml_append(method, aml_notify(aml_name(ACPI_POWER_BUTTON_DEVICE),
+                                  aml_int(0x80)));
+    aml_append(dev, method);
+    aml_append(scope, dev);
+}
+
+static void acpi_dsdt_add_power_button(Aml *scope)
+{
+    Aml *dev = aml_device(ACPI_POWER_BUTTON_DEVICE);
+    aml_append(dev, aml_name_decl("_HID", aml_string("PNP0C0C")));
+    aml_append(dev, aml_name_decl("_ADR", aml_int(0)));
+    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
     aml_append(scope, dev);
 }
 
@@ -334,6 +395,39 @@ build_rsdp(GArray *rsdp_table, GArray *linker, unsigned rsdt)
 }
 
 static void
+build_spcr(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
+{
+    AcpiSerialPortConsoleRedirection *spcr;
+    const MemMapEntry *uart_memmap = &guest_info->memmap[VIRT_UART];
+    int irq = guest_info->irqmap[VIRT_UART] + ARM_SPI_BASE;
+
+    spcr = acpi_data_push(table_data, sizeof(*spcr));
+
+    spcr->interface_type = 0x3;    /* ARM PL011 UART */
+
+    spcr->base_address.space_id = AML_SYSTEM_MEMORY;
+    spcr->base_address.bit_width = 8;
+    spcr->base_address.bit_offset = 0;
+    spcr->base_address.access_width = 1;
+    spcr->base_address.address = cpu_to_le64(uart_memmap->base);
+
+    spcr->interrupt_types = (1 << 3); /* Bit[3] ARMH GIC interrupt */
+    spcr->gsi = cpu_to_le32(irq);  /* Global System Interrupt */
+
+    spcr->baud = 3;                /* Baud Rate: 3 = 9600 */
+    spcr->parity = 0;              /* No Parity */
+    spcr->stopbits = 1;            /* 1 Stop bit */
+    spcr->flowctrl = (1 << 1);     /* Bit[1] = RTS/CTS hardware flow control */
+    spcr->term_type = 0;           /* Terminal Type: 0 = VT100 */
+
+    spcr->pci_device_id = 0xffff;  /* PCI Device ID: not a PCI device */
+    spcr->pci_vendor_id = 0xffff;  /* PCI Vendor ID: not a PCI device */
+
+    build_header(linker, table_data, (void *)spcr, "SPCR", sizeof(*spcr), 2,
+                 NULL);
+}
+
+static void
 build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
 {
     AcpiTableMcfg *mcfg;
@@ -349,7 +443,7 @@ build_mcfg(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     mcfg->allocation[0].end_bus_number = (memmap[VIRT_PCIE_ECAM].size
                                           / PCIE_MMCFG_SIZE_MIN) - 1;
 
-    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 5);
+    build_header(linker, table_data, (void *)mcfg, "MCFG", len, 1, NULL);
 }
 
 /* GTDT */
@@ -375,7 +469,7 @@ build_gtdt(GArray *table_data, GArray *linker)
 
     build_header(linker, table_data,
                  (void *)(table_data->data + gtdt_start), "GTDT",
-                 table_data->len - gtdt_start, 5);
+                 table_data->len - gtdt_start, 2, NULL);
 }
 
 /* MADT */
@@ -385,34 +479,59 @@ build_madt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info,
 {
     int madt_start = table_data->len;
     const MemMapEntry *memmap = guest_info->memmap;
+    const int *irqmap = guest_info->irqmap;
     AcpiMultipleApicTable *madt;
     AcpiMadtGenericDistributor *gicd;
+    AcpiMadtGenericMsiFrame *gic_msi;
     int i;
 
     madt = acpi_data_push(table_data, sizeof *madt);
-
-    for (i = 0; i < guest_info->smp_cpus; i++) {
-        AcpiMadtGenericInterrupt *gicc = acpi_data_push(table_data,
-                                                     sizeof *gicc);
-        gicc->type = ACPI_APIC_GENERIC_INTERRUPT;
-        gicc->length = sizeof(*gicc);
-        gicc->base_address = memmap[VIRT_GIC_CPU].base;
-        gicc->cpu_interface_number = i;
-        gicc->arm_mpidr = i;
-        gicc->uid = i;
-        if (test_bit(i, cpuinfo->found_cpus)) {
-            gicc->flags = cpu_to_le32(ACPI_GICC_ENABLED);
-        }
-    }
 
     gicd = acpi_data_push(table_data, sizeof *gicd);
     gicd->type = ACPI_APIC_GENERIC_DISTRIBUTOR;
     gicd->length = sizeof(*gicd);
     gicd->base_address = memmap[VIRT_GIC_DIST].base;
 
+    for (i = 0; i < guest_info->smp_cpus; i++) {
+        AcpiMadtGenericInterrupt *gicc = acpi_data_push(table_data,
+                                                     sizeof *gicc);
+        ARMCPU *armcpu = ARM_CPU(qemu_get_cpu(i));
+
+        gicc->type = ACPI_APIC_GENERIC_INTERRUPT;
+        gicc->length = sizeof(*gicc);
+        if (guest_info->gic_version == 2) {
+            gicc->base_address = memmap[VIRT_GIC_CPU].base;
+        }
+        gicc->cpu_interface_number = i;
+        gicc->arm_mpidr = armcpu->mp_affinity;
+        gicc->uid = i;
+        if (test_bit(i, cpuinfo->found_cpus)) {
+            gicc->flags = cpu_to_le32(ACPI_GICC_ENABLED);
+        }
+    }
+
+    if (guest_info->gic_version == 3) {
+        AcpiMadtGenericRedistributor *gicr = acpi_data_push(table_data,
+                                                         sizeof *gicr);
+
+        gicr->type = ACPI_APIC_GENERIC_REDISTRIBUTOR;
+        gicr->length = sizeof(*gicr);
+        gicr->base_address = cpu_to_le64(memmap[VIRT_GIC_REDIST].base);
+        gicr->range_length = cpu_to_le32(memmap[VIRT_GIC_REDIST].size);
+    } else {
+        gic_msi = acpi_data_push(table_data, sizeof *gic_msi);
+        gic_msi->type = ACPI_APIC_GENERIC_MSI_FRAME;
+        gic_msi->length = sizeof(*gic_msi);
+        gic_msi->gic_msi_frame_id = 0;
+        gic_msi->base_address = cpu_to_le64(memmap[VIRT_GIC_V2M].base);
+        gic_msi->flags = cpu_to_le32(1);
+        gic_msi->spi_count = cpu_to_le16(NUM_GICV2M_SPIS);
+        gic_msi->spi_base = cpu_to_le16(irqmap[VIRT_GIC_V2M] + ARM_SPI_BASE);
+    }
+
     build_header(linker, table_data,
                  (void *)(table_data->data + madt_start), "APIC",
-                 table_data->len - madt_start, 5);
+                 table_data->len - madt_start, 3, NULL);
 }
 
 /* FADT */
@@ -437,7 +556,7 @@ build_fadt(GArray *table_data, GArray *linker, unsigned dsdt)
                                    sizeof fadt->dsdt);
 
     build_header(linker, table_data,
-                 (void *)fadt, "FACP", sizeof(*fadt), 5);
+                 (void *)fadt, "FACP", sizeof(*fadt), 5, NULL);
 }
 
 /* DSDT */
@@ -461,7 +580,11 @@ build_dsdt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     acpi_dsdt_add_flash(scope, &memmap[VIRT_FLASH]);
     acpi_dsdt_add_virtio(scope, &memmap[VIRT_MMIO],
                     (irqmap[VIRT_MMIO] + ARM_SPI_BASE), NUM_VIRTIO_TRANSPORTS);
-    acpi_dsdt_add_pci(scope, memmap, (irqmap[VIRT_PCIE] + ARM_SPI_BASE));
+    acpi_dsdt_add_pci(scope, memmap, (irqmap[VIRT_PCIE] + ARM_SPI_BASE),
+                      guest_info->use_highmem);
+    acpi_dsdt_add_gpio(scope, &memmap[VIRT_GPIO],
+                       (irqmap[VIRT_GPIO] + ARM_SPI_BASE));
+    acpi_dsdt_add_power_button(scope);
 
     aml_append(dsdt, scope);
 
@@ -469,7 +592,7 @@ build_dsdt(GArray *table_data, GArray *linker, VirtGuestInfo *guest_info)
     g_array_append_vals(table_data, dsdt->buf->data, dsdt->buf->len);
     build_header(linker, table_data,
         (void *)(table_data->data + table_data->len - dsdt->buf->len),
-        "DSDT", dsdt->buf->len, 5);
+        "DSDT", dsdt->buf->len, 2, NULL);
     free_aml_allocator();
 }
 
@@ -507,6 +630,7 @@ void virt_acpi_build(VirtGuestInfo *guest_info, AcpiBuildTables *tables)
      * FADT
      * GTDT
      * MADT
+     * MCFG
      * DSDT
      */
 
@@ -514,7 +638,7 @@ void virt_acpi_build(VirtGuestInfo *guest_info, AcpiBuildTables *tables)
     dsdt = tables_blob->len;
     build_dsdt(tables_blob, tables->linker, guest_info);
 
-    /* FADT MADT GTDT pointed to by RSDT */
+    /* FADT MADT GTDT MCFG SPCR pointed to by RSDT */
     acpi_add_table(table_offsets, tables_blob);
     build_fadt(tables_blob, tables->linker, dsdt);
 
@@ -526,6 +650,9 @@ void virt_acpi_build(VirtGuestInfo *guest_info, AcpiBuildTables *tables)
 
     acpi_add_table(table_offsets, tables_blob);
     build_mcfg(tables_blob, tables->linker, guest_info);
+
+    acpi_add_table(table_offsets, tables_blob);
+    build_spcr(tables_blob, tables->linker, guest_info);
 
     /* RSDT is pointed to by RSDP */
     rsdt = tables_blob->len;
@@ -550,7 +677,7 @@ static void acpi_ram_update(MemoryRegion *mr, GArray *data)
     memory_region_set_dirty(mr, 0, size);
 }
 
-static void virt_acpi_build_update(void *build_opaque, uint32_t offset)
+static void virt_acpi_build_update(void *build_opaque)
 {
     AcpiBuildState *build_state = build_opaque;
     AcpiBuildTables tables;

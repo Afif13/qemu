@@ -337,7 +337,7 @@ static inline void fimd_swap_data(unsigned int swap_ctl, uint64_t *data)
     if (swap_ctl & FIMD_WINCON_SWAP_BITS) {
         res = 0;
         for (i = 0; i < 64; i++) {
-            if (x & (1ULL << (64 - i))) {
+            if (x & (1ULL << (63 - i))) {
                 res |= (1ULL << i);
             }
         }
@@ -1354,9 +1354,7 @@ static void exynos4210_fimd_reset(DeviceState *d)
         fimd_update_get_alpha(s, w);
     }
 
-    if (s->ifb != NULL) {
-        g_free(s->ifb);
-    }
+    g_free(s->ifb);
     s->ifb = NULL;
 
     exynos4210_fimd_invalidate(s);

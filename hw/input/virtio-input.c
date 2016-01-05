@@ -20,6 +20,10 @@ void virtio_input_send(VirtIOInput *vinput, virtio_input_event *event)
     unsigned have, need;
     int i, len;
 
+    if (!vinput->active) {
+        return;
+    }
+
     /* queue up events ... */
     if (vinput->qindex == vinput->qsize) {
         vinput->qsize++;
@@ -166,7 +170,8 @@ static void virtio_input_set_config(VirtIODevice *vdev,
     virtio_notify_config(vdev);
 }
 
-static uint64_t virtio_input_get_features(VirtIODevice *vdev, uint64_t f)
+static uint64_t virtio_input_get_features(VirtIODevice *vdev, uint64_t f,
+                                          Error **errp)
 {
     return f;
 }
@@ -216,7 +221,7 @@ static void virtio_input_device_realize(DeviceState *dev, Error **errp)
     }
 
     virtio_input_idstr_config(vinput, VIRTIO_INPUT_CFG_ID_SERIAL,
-                              vinput->input.serial);
+                              vinput->serial);
 
     QTAILQ_FOREACH(cfg, &vinput->cfg_list, node) {
         if (vinput->cfg_size < cfg->config.size) {
@@ -248,11 +253,17 @@ static void virtio_input_device_unrealize(DeviceState *dev, Error **errp)
     virtio_cleanup(vdev);
 }
 
+static Property virtio_input_properties[] = {
+    DEFINE_PROP_STRING("serial", VirtIOInput, serial),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void virtio_input_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     VirtioDeviceClass *vdc = VIRTIO_DEVICE_CLASS(klass);
 
+    dc->props          = virtio_input_properties;
     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
     vdc->realize      = virtio_input_device_realize;
     vdc->unrealize    = virtio_input_device_unrealize;

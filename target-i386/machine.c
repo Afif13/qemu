@@ -367,8 +367,12 @@ static int cpu_post_load(void *opaque, int version_id)
 
     cpu_breakpoint_remove_all(cs, BP_CPU);
     cpu_watchpoint_remove_all(cs, BP_CPU);
-    for (i = 0; i < DR7_MAX_BP; i++) {
-        hw_breakpoint_insert(env, i);
+    {
+        /* Indicate all breakpoints disabled, as they are, then
+           let the helper re-enable them.  */
+        target_ulong dr7 = env->dr[7];
+        env->dr[7] = dr7 & ~(DR7_GLOBAL_BP_MASK | DR7_LOCAL_BP_MASK);
+        cpu_x86_update_dr7(env, dr7);
     }
     tlb_flush(cs, 1);
 
@@ -661,6 +665,115 @@ static const VMStateDescription vmstate_msr_hyperv_time = {
     }
 };
 
+static bool hyperv_crash_enable_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+    int i;
+
+    for (i = 0; i < HV_X64_MSR_CRASH_PARAMS; i++) {
+        if (env->msr_hv_crash_params[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const VMStateDescription vmstate_msr_hyperv_crash = {
+    .name = "cpu/msr_hyperv_crash",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = hyperv_crash_enable_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT64_ARRAY(env.msr_hv_crash_params,
+                             X86CPU, HV_X64_MSR_CRASH_PARAMS),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool hyperv_runtime_enable_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+
+    return env->msr_hv_runtime != 0;
+}
+
+static const VMStateDescription vmstate_msr_hyperv_runtime = {
+    .name = "cpu/msr_hyperv_runtime",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = hyperv_runtime_enable_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT64(env.msr_hv_runtime, X86CPU),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool hyperv_synic_enable_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+    int i;
+
+    if (env->msr_hv_synic_control != 0 ||
+        env->msr_hv_synic_evt_page != 0 ||
+        env->msr_hv_synic_msg_page != 0) {
+        return true;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(env->msr_hv_synic_sint); i++) {
+        if (env->msr_hv_synic_sint[i] != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const VMStateDescription vmstate_msr_hyperv_synic = {
+    .name = "cpu/msr_hyperv_synic",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = hyperv_synic_enable_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT64(env.msr_hv_synic_control, X86CPU),
+        VMSTATE_UINT64(env.msr_hv_synic_evt_page, X86CPU),
+        VMSTATE_UINT64(env.msr_hv_synic_msg_page, X86CPU),
+        VMSTATE_UINT64_ARRAY(env.msr_hv_synic_sint, X86CPU,
+                             HV_SYNIC_SINT_COUNT),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool hyperv_stimer_enable_needed(void *opaque)
+{
+    X86CPU *cpu = opaque;
+    CPUX86State *env = &cpu->env;
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(env->msr_hv_stimer_config); i++) {
+        if (env->msr_hv_stimer_config[i] || env->msr_hv_stimer_count[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const VMStateDescription vmstate_msr_hyperv_stimer = {
+    .name = "cpu/msr_hyperv_stimer",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .needed = hyperv_stimer_enable_needed,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT64_ARRAY(env.msr_hv_stimer_config,
+                             X86CPU, HV_SYNIC_STIMER_COUNT),
+        VMSTATE_UINT64_ARRAY(env.msr_hv_stimer_count,
+                             X86CPU, HV_SYNIC_STIMER_COUNT),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static bool avx512_needed(void *opaque)
 {
     X86CPU *cpu = opaque;
@@ -842,6 +955,10 @@ VMStateDescription vmstate_x86_cpu = {
         &vmstate_msr_hypercall_hypercall,
         &vmstate_msr_hyperv_vapic,
         &vmstate_msr_hyperv_time,
+        &vmstate_msr_hyperv_crash,
+        &vmstate_msr_hyperv_runtime,
+        &vmstate_msr_hyperv_synic,
+        &vmstate_msr_hyperv_stimer,
         &vmstate_avx512,
         &vmstate_xss,
         NULL

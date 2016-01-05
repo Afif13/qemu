@@ -30,6 +30,7 @@
 #include "qemu/queue.h"
 #include "qapi/error.h"
 #include "qapi/qmp/qdict.h"
+#include "qemu/typedefs.h"
 
 const char *get_opt_name(char *buf, int buf_size, const char *p, char delim);
 const char *get_opt_value(char *buf, int buf_size, const char *p);
@@ -43,10 +44,6 @@ void parse_option_size(const char *name, const char *value,
                        uint64_t *ret, Error **errp);
 bool has_help_option(const char *param);
 bool is_valid_option_list(const char *param);
-
-typedef struct QemuOpt QemuOpt;
-typedef struct QemuOpts QemuOpts;
-typedef struct QemuOptsList QemuOptsList;
 
 enum QemuOptType {
     QEMU_OPT_STRING = 0,  /* no parsing (use string as-is)                        */
@@ -119,7 +116,10 @@ void qemu_opts_del(QemuOpts *opts);
 void qemu_opts_validate(QemuOpts *opts, const QemuOptDesc *desc, Error **errp);
 void qemu_opts_do_parse(QemuOpts *opts, const char *params,
                         const char *firstname, Error **errp);
-QemuOpts *qemu_opts_parse(QemuOptsList *list, const char *params, int permit_abbrev);
+QemuOpts *qemu_opts_parse_noisily(QemuOptsList *list, const char *params,
+                                  bool permit_abbrev);
+QemuOpts *qemu_opts_parse(QemuOptsList *list, const char *params,
+                          bool permit_abbrev, Error **errp);
 void qemu_opts_set_defaults(QemuOptsList *list, const char *params,
                             int permit_abbrev);
 QemuOpts *qemu_opts_from_qdict(QemuOptsList *list, const QDict *qdict,

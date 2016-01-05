@@ -16,6 +16,7 @@
 
 #include <sys/ioctl.h>
 #include "config.h"
+#include "qemu/error-report.h"
 #include "qemu/queue.h"
 #include "monitor/monitor.h"
 #include "migration/migration.h"
@@ -25,6 +26,7 @@
 #include "hw/virtio/virtio-bus.h"
 #include "hw/virtio/virtio-access.h"
 #include "hw/fw-path-provider.h"
+#include "linux/vhost.h"
 
 /* Features supported by host kernel. */
 static const int kernel_feature_bits[] = {
@@ -44,7 +46,7 @@ static int vhost_scsi_set_endpoint(VHostSCSI *s)
 
     memset(&backend, 0, sizeof(backend));
     pstrcpy(backend.vhost_wwpn, sizeof(backend.vhost_wwpn), vs->conf.wwpn);
-    ret = vhost_ops->vhost_call(&s->dev, VHOST_SCSI_SET_ENDPOINT, &backend);
+    ret = vhost_ops->vhost_scsi_set_endpoint(&s->dev, &backend);
     if (ret < 0) {
         return -errno;
     }
@@ -59,7 +61,7 @@ static void vhost_scsi_clear_endpoint(VHostSCSI *s)
 
     memset(&backend, 0, sizeof(backend));
     pstrcpy(backend.vhost_wwpn, sizeof(backend.vhost_wwpn), vs->conf.wwpn);
-    vhost_ops->vhost_call(&s->dev, VHOST_SCSI_CLEAR_ENDPOINT, &backend);
+    vhost_ops->vhost_scsi_clear_endpoint(&s->dev, &backend);
 }
 
 static int vhost_scsi_start(VHostSCSI *s)
@@ -75,8 +77,7 @@ static int vhost_scsi_start(VHostSCSI *s)
         return -ENOSYS;
     }
 
-    ret = vhost_ops->vhost_call(&s->dev,
-                                VHOST_SCSI_GET_ABI_VERSION, &abi_version);
+    ret = vhost_ops->vhost_scsi_get_abi_version(&s->dev, &abi_version);
     if (ret < 0) {
         return -errno;
     }
@@ -117,7 +118,7 @@ static int vhost_scsi_start(VHostSCSI *s)
      * enabling/disabling irqfd.
      */
     for (i = 0; i < s->dev.nvqs; i++) {
-        vhost_virtqueue_mask(&s->dev, vdev, i, false);
+        vhost_virtqueue_mask(&s->dev, vdev, s->dev.vq_index + i, false);
     }
 
     return ret;
@@ -152,7 +153,8 @@ static void vhost_scsi_stop(VHostSCSI *s)
 }
 
 static uint64_t vhost_scsi_get_features(VirtIODevice *vdev,
-                                        uint64_t features)
+                                        uint64_t features,
+                                        Error **errp)
 {
     VHostSCSI *s = VHOST_SCSI(vdev);
 
@@ -246,7 +248,7 @@ static void vhost_scsi_realize(DeviceState *dev, Error **errp)
     s->dev.backend_features = 0;
 
     ret = vhost_dev_init(&s->dev, (void *)(uintptr_t)vhostfd,
-                         VHOST_BACKEND_TYPE_KERNEL, true);
+                         VHOST_BACKEND_TYPE_KERNEL);
     if (ret < 0) {
         error_setg(errp, "vhost-scsi: vhost initialization failed: %s",
                    strerror(-ret));
@@ -275,6 +277,7 @@ static void vhost_scsi_unrealize(DeviceState *dev, Error **errp)
     /* This will stop vhost backend. */
     vhost_scsi_set_status(vdev, 0);
 
+    vhost_dev_cleanup(&s->dev);
     g_free(s->dev.vqs);
 
     virtio_scsi_common_unrealize(dev, errp);
@@ -289,7 +292,7 @@ static char *vhost_scsi_get_fw_dev_path(FWPathProvider *p, BusState *bus,
 {
     VHostSCSI *s = VHOST_SCSI(dev);
     /* format: channel@channel/vhost-scsi@target,lun */
-    return g_strdup_printf("channel@%x/%s@%x,%x", s->channel,
+    return g_strdup_printf("/channel@%x/%s@%x,%x", s->channel,
                            qdev_fw_name(dev), s->target, s->lun);
 }
 

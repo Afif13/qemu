@@ -27,14 +27,13 @@
 
 #include "qemu-common.h"
 #include "qemu/timer.h"
-#include "monitor/monitor.h"
 #include "sysemu/sysemu.h"
+#include "qapi/qmp/qerror.h"
+#include "qemu/error-report.h"
 #include "qemu/iov.h"
 #include "sysemu/char.h"
 
-#include <dirent.h>
 #include <sys/ioctl.h>
-#include <signal.h>
 #include <usbredirparser.h>
 #include <usbredirfilter.h>
 
@@ -323,7 +322,7 @@ static void packet_id_queue_add(struct PacketIdQueue *q, uint64_t id)
 
     DPRINTF("adding packet id %"PRIu64" to %s queue\n", id, q->name);
 
-    e = g_malloc0(sizeof(struct PacketIdQueueEntry));
+    e = g_new0(struct PacketIdQueueEntry, 1);
     e->id = id;
     QTAILQ_INSERT_TAIL(&q->head, e, next);
     q->size++;
@@ -469,7 +468,7 @@ static void bufp_alloc(USBRedirDevice *dev, uint8_t *data, uint16_t len,
         dev->endpoint[EP2I(ep)].bufpq_dropping_packets = 0;
     }
 
-    bufp = g_malloc(sizeof(struct buf_packet));
+    bufp = g_new(struct buf_packet, 1);
     bufp->data   = data;
     bufp->len    = len;
     bufp->offset = 0;
@@ -1369,7 +1368,7 @@ static void usbredir_realize(USBDevice *udev, Error **errp)
     int i;
 
     if (dev->cs == NULL) {
-        error_set(errp, QERR_MISSING_PARAMETER, "chardev");
+        error_setg(errp, QERR_MISSING_PARAMETER, "chardev");
         return;
     }
 
@@ -1378,8 +1377,8 @@ static void usbredir_realize(USBDevice *udev, Error **errp)
                                            &dev->filter_rules,
                                            &dev->filter_rules_count);
         if (i) {
-            error_set(errp, QERR_INVALID_PARAMETER_VALUE, "filter",
-                      "a usb device filter string");
+            error_setg(errp, QERR_INVALID_PARAMETER_VALUE, "filter",
+                       "a usb device filter string");
             return;
         }
     }
@@ -2235,7 +2234,7 @@ static int usbredir_get_bufpq(QEMUFile *f, void *priv, size_t unused)
 
     endp->bufpq_size = qemu_get_be32(f);
     for (i = 0; i < endp->bufpq_size; i++) {
-        bufp = g_malloc(sizeof(struct buf_packet));
+        bufp = g_new(struct buf_packet, 1);
         bufp->len = qemu_get_be32(f);
         bufp->status = qemu_get_be32(f);
         bufp->offset = 0;

@@ -81,43 +81,90 @@ uint32_t HELPER(neon_tbl)(CPUARMState *env, uint32_t ireg, uint32_t def,
 void tlb_fill(CPUState *cs, target_ulong addr, int is_write, int mmu_idx,
               uintptr_t retaddr)
 {
-    int ret;
+    bool ret;
+    uint32_t fsr = 0;
+    ARMMMUFaultInfo fi = {};
 
-    ret = arm_tlb_fill(cs, addr, is_write, mmu_idx);
+    ret = arm_tlb_fill(cs, addr, is_write, mmu_idx, &fsr, &fi);
     if (unlikely(ret)) {
         ARMCPU *cpu = ARM_CPU(cs);
         CPUARMState *env = &cpu->env;
         uint32_t syn, exc;
-        bool same_el = (arm_current_el(env) != 0);
+        unsigned int target_el;
+        bool same_el;
 
         if (retaddr) {
             /* now we have a real cpu fault */
             cpu_restore_state(cs, retaddr);
         }
 
+        target_el = exception_target_el(env);
+        if (fi.stage2) {
+            target_el = 2;
+            env->cp15.hpfar_el2 = extract64(fi.s2addr, 12, 47) << 4;
+        }
+        same_el = arm_current_el(env) == target_el;
         /* AArch64 syndrome does not have an LPAE bit */
-        syn = ret & ~(1 << 9);
+        syn = fsr & ~(1 << 9);
 
         /* For insn and data aborts we assume there is no instruction syndrome
          * information; this is always true for exceptions reported to EL1.
          */
         if (is_write == 2) {
-            syn = syn_insn_abort(same_el, 0, 0, syn);
+            syn = syn_insn_abort(same_el, 0, fi.s1ptw, syn);
             exc = EXCP_PREFETCH_ABORT;
         } else {
-            syn = syn_data_abort(same_el, 0, 0, 0, is_write == 1, syn);
+            syn = syn_data_abort(same_el, 0, 0, fi.s1ptw, is_write == 1, syn);
             if (is_write == 1 && arm_feature(env, ARM_FEATURE_V6)) {
-                ret |= (1 << 11);
+                fsr |= (1 << 11);
             }
             exc = EXCP_DATA_ABORT;
         }
 
         env->exception.vaddress = addr;
-        env->exception.fsr = ret;
-        raise_exception(env, exc, syn, exception_target_el(env));
+        env->exception.fsr = fsr;
+        raise_exception(env, exc, syn, target_el);
     }
 }
-#endif
+
+/* Raise a data fault alignment exception for the specified virtual address */
+void arm_cpu_do_unaligned_access(CPUState *cs, vaddr vaddr, int is_write,
+                                 int is_user, uintptr_t retaddr)
+{
+    ARMCPU *cpu = ARM_CPU(cs);
+    CPUARMState *env = &cpu->env;
+    int target_el;
+    bool same_el;
+
+    if (retaddr) {
+        /* now we have a real cpu fault */
+        cpu_restore_state(cs, retaddr);
+    }
+
+    target_el = exception_target_el(env);
+    same_el = (arm_current_el(env) == target_el);
+
+    env->exception.vaddress = vaddr;
+
+    /* the DFSR for an alignment fault depends on whether we're using
+     * the LPAE long descriptor format, or the short descriptor format
+     */
+    if (arm_regime_using_lpae_format(env, cpu_mmu_index(env, false))) {
+        env->exception.fsr = 0x21;
+    } else {
+        env->exception.fsr = 0x1;
+    }
+
+    if (is_write == 1 && arm_feature(env, ARM_FEATURE_V6)) {
+        env->exception.fsr |= (1 << 11);
+    }
+
+    raise_exception(env, EXCP_DATA_ABORT,
+                    syn_data_abort(same_el, 0, 0, 0, is_write == 1, 0x21),
+                    target_el);
+}
+
+#endif /* !defined(CONFIG_USER_ONLY) */
 
 uint32_t HELPER(add_setq)(CPUARMState *env, uint32_t a, uint32_t b)
 {
@@ -322,12 +369,24 @@ void HELPER(wfi)(CPUARMState *env)
 
 void HELPER(wfe)(CPUARMState *env)
 {
-    CPUState *cs = CPU(arm_env_get_cpu(env));
-
-    /* Don't actually halt the CPU, just yield back to top
+    /* This is a hint instruction that is semantically different
+     * from YIELD even though we currently implement it identically.
+     * Don't actually halt the CPU, just yield back to top
      * level loop. This is not going into a "low power state"
      * (ie halting until some event occurs), so we never take
      * a configurable trap to a different exception level.
+     */
+    HELPER(yield)(env);
+}
+
+void HELPER(yield)(CPUARMState *env)
+{
+    ARMCPU *cpu = arm_env_get_cpu(env);
+    CPUState *cs = CPU(cpu);
+
+    /* This is a non-trappable hint instruction that generally indicates
+     * that the guest is currently busy-looping. Yield control back to the
+     * top level loop so that a more deserving VCPU has a chance to run.
      */
     cs->exception_index = EXCP_YIELD;
     cpu_loop_exit(cs);
@@ -371,9 +430,9 @@ uint32_t HELPER(get_user_reg)(CPUARMState *env, uint32_t regno)
     uint32_t val;
 
     if (regno == 13) {
-        val = env->banked_r13[0];
+        val = env->banked_r13[BANK_USRSYS];
     } else if (regno == 14) {
-        val = env->banked_r14[0];
+        val = env->banked_r14[BANK_USRSYS];
     } else if (regno >= 8
                && (env->uncached_cpsr & 0x1f) == ARM_CPU_MODE_FIQ) {
         val = env->usr_regs[regno - 8];
@@ -386,9 +445,9 @@ uint32_t HELPER(get_user_reg)(CPUARMState *env, uint32_t regno)
 void HELPER(set_user_reg)(CPUARMState *env, uint32_t regno, uint32_t val)
 {
     if (regno == 13) {
-        env->banked_r13[0] = val;
+        env->banked_r13[BANK_USRSYS] = val;
     } else if (regno == 14) {
-        env->banked_r14[0] = val;
+        env->banked_r14[BANK_USRSYS] = val;
     } else if (regno >= 8
                && (env->uncached_cpsr & 0x1f) == ARM_CPU_MODE_FIQ) {
         env->usr_regs[regno - 8] = val;
@@ -429,6 +488,14 @@ void HELPER(access_check_cp_reg)(CPUARMState *env, void *rip, uint32_t syndrome)
         break;
     case CP_ACCESS_TRAP_UNCATEGORIZED:
         target_el = exception_target_el(env);
+        syndrome = syn_uncategorized();
+        break;
+    case CP_ACCESS_TRAP_UNCATEGORIZED_EL2:
+        target_el = 2;
+        syndrome = syn_uncategorized();
+        break;
+    case CP_ACCESS_TRAP_UNCATEGORIZED_EL3:
+        target_el = 3;
         syndrome = syn_uncategorized();
         break;
     default:
@@ -846,6 +913,15 @@ static bool check_breakpoints(ARMCPU *cpu)
     return false;
 }
 
+void HELPER(check_breakpoints)(CPUARMState *env)
+{
+    ARMCPU *cpu = arm_env_get_cpu(env);
+
+    if (check_breakpoints(cpu)) {
+        HELPER(exception_internal(env, EXCP_DEBUG));
+    }
+}
+
 void arm_debug_excp_handler(CPUState *cs)
 {
     /* Called by core code when a watchpoint or breakpoint fires;
@@ -876,18 +952,28 @@ void arm_debug_excp_handler(CPUState *cs)
             }
         }
     } else {
-        if (check_breakpoints(cpu)) {
-            bool same_el = (arm_debug_target_el(env) == arm_current_el(env));
-            if (extended_addresses_enabled(env)) {
-                env->exception.fsr = (1 << 9) | 0x22;
-            } else {
-                env->exception.fsr = 0x2;
-            }
-            /* FAR is UNKNOWN, so doesn't need setting */
-            raise_exception(env, EXCP_PREFETCH_ABORT,
-                            syn_breakpoint(same_el),
-                            arm_debug_target_el(env));
+        uint64_t pc = is_a64(env) ? env->pc : env->regs[15];
+        bool same_el = (arm_debug_target_el(env) == arm_current_el(env));
+
+        /* (1) GDB breakpoints should be handled first.
+         * (2) Do not raise a CPU exception if no CPU breakpoint has fired,
+         * since singlestep is also done by generating a debug internal
+         * exception.
+         */
+        if (cpu_breakpoint_test(cs, pc, BP_GDB)
+            || !cpu_breakpoint_test(cs, pc, BP_CPU)) {
+            return;
         }
+
+        if (extended_addresses_enabled(env)) {
+            env->exception.fsr = (1 << 9) | 0x22;
+        } else {
+            env->exception.fsr = 0x2;
+        }
+        /* FAR is UNKNOWN, so doesn't need setting */
+        raise_exception(env, EXCP_PREFETCH_ABORT,
+                        syn_breakpoint(same_el),
+                        arm_debug_target_el(env));
     }
 }
 

@@ -51,7 +51,7 @@ static void xlnx_ep108_init(MachineState *machine)
         machine->ram_size = EP108_MAX_RAM_SIZE;
     }
 
-    if (machine->ram_size <= 0x08000000) {
+    if (machine->ram_size < 0x08000000) {
         qemu_log("WARNING: RAM size " RAM_ADDR_FMT " is small for EP108",
                  machine->ram_size);
     }
@@ -65,18 +65,13 @@ static void xlnx_ep108_init(MachineState *machine)
     xlnx_ep108_binfo.kernel_cmdline = machine->kernel_cmdline;
     xlnx_ep108_binfo.initrd_filename = machine->initrd_filename;
     xlnx_ep108_binfo.loader_start = 0;
-    arm_load_kernel(&s->soc.cpu[0], &xlnx_ep108_binfo);
+    arm_load_kernel(s->soc.boot_cpu_ptr, &xlnx_ep108_binfo);
 }
 
-static QEMUMachine xlnx_ep108_machine = {
-    .name = "xlnx-ep108",
-    .desc = "Xilinx ZynqMP EP108 board",
-    .init = xlnx_ep108_init,
-};
-
-static void xlnx_ep108_machine_init(void)
+static void xlnx_ep108_machine_init(MachineClass *mc)
 {
-    qemu_register_machine(&xlnx_ep108_machine);
+    mc->desc = "Xilinx ZynqMP EP108 board";
+    mc->init = xlnx_ep108_init;
 }
 
-machine_init(xlnx_ep108_machine_init);
+DEFINE_MACHINE("xlnx-ep108", xlnx_ep108_machine_init)

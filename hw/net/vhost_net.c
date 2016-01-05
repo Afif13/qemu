@@ -38,6 +38,7 @@
 #include "standard-headers/linux/virtio_ring.h"
 #include "hw/virtio/vhost.h"
 #include "hw/virtio/virtio-bus.h"
+#include "hw/virtio/virtio-access.h"
 
 struct vhost_net {
     struct vhost_dev dev;
@@ -76,13 +77,9 @@ static const int user_feature_bits[] = {
     VIRTIO_NET_F_HOST_ECN,
     VIRTIO_NET_F_HOST_UFO,
     VIRTIO_NET_F_MRG_RXBUF,
-    VIRTIO_NET_F_STATUS,
-    VIRTIO_NET_F_CTRL_VQ,
-    VIRTIO_NET_F_CTRL_RX,
-    VIRTIO_NET_F_CTRL_VLAN,
-    VIRTIO_NET_F_CTRL_RX_EXTRA,
-    VIRTIO_NET_F_CTRL_MAC_ADDR,
-    VIRTIO_NET_F_CTRL_GUEST_OFFLOADS,
+
+    /* This bit implies RARP isn't sent by QEMU out of band */
+    VIRTIO_NET_F_GUEST_ANNOUNCE,
 
     VIRTIO_NET_F_MQ,
 
@@ -121,6 +118,11 @@ void vhost_net_ack_features(struct vhost_net *net, uint64_t features)
     vhost_ack_features(&net->dev, vhost_net_get_feature_bits(net), features);
 }
 
+uint64_t vhost_net_get_max_queues(VHostNetState *net)
+{
+    return net->dev.max_queues;
+}
+
 static int vhost_net_get_fd(NetClientState *backend)
 {
     switch (backend->info->type) {
@@ -142,6 +144,11 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
         fprintf(stderr, "vhost-net requires net backend to be setup\n");
         goto fail;
     }
+    net->nc = options->net_backend;
+
+    net->dev.max_queues = 1;
+    net->dev.nvqs = 2;
+    net->dev.vqs = net->vqs;
 
     if (backend_kernel) {
         r = vhost_net_get_fd(options->net_backend);
@@ -151,18 +158,18 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
         net->dev.backend_features = qemu_has_vnet_hdr(options->net_backend)
             ? 0 : (1ULL << VHOST_NET_F_VIRTIO_NET_HDR);
         net->backend = r;
+        net->dev.protocol_features = 0;
     } else {
         net->dev.backend_features = 0;
+        net->dev.protocol_features = 0;
         net->backend = -1;
-    }
-    net->nc = options->net_backend;
 
-    net->dev.nvqs = 2;
-    net->dev.vqs = net->vqs;
-    net->dev.vq_index = net->nc->queue_index;
+        /* vhost-user needs vq_index to initiate a specific queue pair */
+        net->dev.vq_index = net->nc->queue_index * net->dev.nvqs;
+    }
 
     r = vhost_dev_init(&net->dev, options->opaque,
-                       options->backend_type, options->force);
+                       options->backend_type);
     if (r < 0) {
         goto fail;
     }
@@ -187,14 +194,30 @@ fail:
     return NULL;
 }
 
-bool vhost_net_query(VHostNetState *net, VirtIODevice *dev)
-{
-    return vhost_dev_query(&net->dev, dev);
-}
-
 static void vhost_net_set_vq_index(struct vhost_net *net, int vq_index)
 {
     net->dev.vq_index = vq_index;
+}
+
+static int vhost_net_set_vnet_endian(VirtIODevice *dev, NetClientState *peer,
+                                     bool set)
+{
+    int r = 0;
+
+    if (virtio_vdev_has_feature(dev, VIRTIO_F_VERSION_1) ||
+        (virtio_legacy_is_cross_endian(dev) && !virtio_is_big_endian(dev))) {
+        r = qemu_set_vnet_le(peer, set);
+        if (r) {
+            error_report("backend does not support LE vnet headers");
+        }
+    } else if (virtio_legacy_is_cross_endian(dev)) {
+        r = qemu_set_vnet_be(peer, set);
+        if (r) {
+            error_report("backend does not support BE vnet headers");
+        }
+    }
+
+    return r;
 }
 
 static int vhost_net_start_one(struct vhost_net *net,
@@ -225,8 +248,7 @@ static int vhost_net_start_one(struct vhost_net *net,
         file.fd = net->backend;
         for (file.index = 0; file.index < net->dev.nvqs; ++file.index) {
             const VhostOps *vhost_ops = net->dev.vhost_ops;
-            r = vhost_ops->vhost_call(&net->dev, VHOST_NET_SET_BACKEND,
-                                      &file);
+            r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
             if (r < 0) {
                 r = -errno;
                 goto fail;
@@ -239,8 +261,7 @@ fail:
     if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_TAP) {
         while (file.index-- > 0) {
             const VhostOps *vhost_ops = net->dev.vhost_ops;
-            int r = vhost_ops->vhost_call(&net->dev, VHOST_NET_SET_BACKEND,
-                                          &file);
+            int r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
             assert(r >= 0);
         }
     }
@@ -262,15 +283,7 @@ static void vhost_net_stop_one(struct vhost_net *net,
     if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_TAP) {
         for (file.index = 0; file.index < net->dev.nvqs; ++file.index) {
             const VhostOps *vhost_ops = net->dev.vhost_ops;
-            int r = vhost_ops->vhost_call(&net->dev, VHOST_NET_SET_BACKEND,
-                                          &file);
-            assert(r >= 0);
-        }
-    } else if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER) {
-        for (file.index = 0; file.index < net->dev.nvqs; ++file.index) {
-            const VhostOps *vhost_ops = net->dev.vhost_ops;
-            int r = vhost_ops->vhost_call(&net->dev, VHOST_RESET_OWNER,
-                                          &file);
+            int r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
             assert(r >= 0);
         }
     }
@@ -281,19 +294,6 @@ static void vhost_net_stop_one(struct vhost_net *net,
     vhost_dev_disable_notifiers(&net->dev, dev);
 }
 
-static bool vhost_net_device_endian_ok(VirtIODevice *vdev)
-{
-#ifdef TARGET_IS_BIENDIAN
-#ifdef HOST_WORDS_BIGENDIAN
-    return virtio_is_big_endian(vdev);
-#else
-    return !virtio_is_big_endian(vdev);
-#endif
-#else
-    return true;
-#endif
-}
-
 int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
                     int total_queues)
 {
@@ -302,15 +302,14 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
     VirtioBusClass *k = VIRTIO_BUS_GET_CLASS(vbus);
     int r, e, i;
 
-    if (!vhost_net_device_endian_ok(dev)) {
-        error_report("vhost-net does not support cross-endian");
+    if (!k->set_guest_notifiers) {
+        error_report("binding does not support guest notifiers");
         r = -ENOSYS;
         goto err;
     }
 
-    if (!k->set_guest_notifiers) {
-        error_report("binding does not support guest notifiers");
-        r = -ENOSYS;
+    r = vhost_net_set_vnet_endian(dev, ncs[0].peer, true);
+    if (r < 0) {
         goto err;
     }
 
@@ -321,7 +320,7 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
     r = k->set_guest_notifiers(qbus->parent, total_queues * 2, true);
     if (r < 0) {
         error_report("Error binding guest notifier: %d", -r);
-        goto err;
+        goto err_endian;
     }
 
     for (i = 0; i < total_queues; i++) {
@@ -343,6 +342,8 @@ err_start:
         fprintf(stderr, "vhost guest notifier cleanup failed: %d\n", e);
         fflush(stderr);
     }
+err_endian:
+    vhost_net_set_vnet_endian(dev, ncs[0].peer, false);
 err:
     return r;
 }
@@ -365,12 +366,26 @@ void vhost_net_stop(VirtIODevice *dev, NetClientState *ncs,
         fflush(stderr);
     }
     assert(r >= 0);
+
+    assert(vhost_net_set_vnet_endian(dev, ncs[0].peer, false) >= 0);
 }
 
 void vhost_net_cleanup(struct vhost_net *net)
 {
     vhost_dev_cleanup(&net->dev);
     g_free(net);
+}
+
+int vhost_net_notify_migration_done(struct vhost_net *net, char* mac_addr)
+{
+    const VhostOps *vhost_ops = net->dev.vhost_ops;
+    int r = -1;
+
+    if (vhost_ops->vhost_migration_done) {
+        r = vhost_ops->vhost_migration_done(&net->dev, mac_addr);
+    }
+
+    return r;
 }
 
 bool vhost_net_virtqueue_pending(VHostNetState *net, int idx)
@@ -405,16 +420,29 @@ VHostNetState *get_vhost_net(NetClientState *nc)
 
     return vhost_net;
 }
+
+int vhost_set_vring_enable(NetClientState *nc, int enable)
+{
+    VHostNetState *net = get_vhost_net(nc);
+    const VhostOps *vhost_ops = net->dev.vhost_ops;
+
+    if (vhost_ops->vhost_set_vring_enable) {
+        return vhost_ops->vhost_set_vring_enable(&net->dev, enable);
+    }
+
+    return 0;
+}
+
 #else
+uint64_t vhost_net_get_max_queues(VHostNetState *net)
+{
+    return 1;
+}
+
 struct vhost_net *vhost_net_init(VhostNetOptions *options)
 {
     error_report("vhost-net support is not compiled in");
     return NULL;
-}
-
-bool vhost_net_query(VHostNetState *net, VirtIODevice *dev)
-{
-    return false;
 }
 
 int vhost_net_start(VirtIODevice *dev,
@@ -451,7 +479,17 @@ void vhost_net_virtqueue_mask(VHostNetState *net, VirtIODevice *dev,
 {
 }
 
+int vhost_net_notify_migration_done(struct vhost_net *net, char* mac_addr)
+{
+    return -1;
+}
+
 VHostNetState *get_vhost_net(NetClientState *nc)
+{
+    return 0;
+}
+
+int vhost_set_vring_enable(NetClientState *nc, int enable)
 {
     return 0;
 }
