@@ -345,6 +345,7 @@ vhdx=""
 numa=""
 tcmalloc="no"
 jemalloc="no"
+rabbits="no"
 
 # parse CC options first
 for opt do
@@ -1169,6 +1170,10 @@ for opt do
   ;;
   --enable-jemalloc) jemalloc="yes"
   ;;
+  --disable-rabbits) rabbits="no"
+  ;;
+  --enable-rabbits) rabbits="yes"
+  ;;
   *)
       echo "ERROR: unknown option $opt"
       echo "Try '$0 --help' for more information"
@@ -1391,6 +1396,7 @@ disabled with --disable-FEATURE, default is enabled if available:
   numa            libnuma support
   tcmalloc        tcmalloc support
   jemalloc        jemalloc support
+  rabbits         rabbits support
 
 NOTE: The object files are built at the place where configure is launched
 EOF
@@ -1568,7 +1574,7 @@ if test "$pie" = ""; then
   esac
 fi
 
-if test "$pie" != "no" ; then
+if test "$pie" != "no" -o "$rabbits" = "yes"; then
   cat > $TMPC << EOF
 
 #ifdef __linux__
@@ -1582,7 +1588,13 @@ static THREAD int tls_var;
 int main(void) { return tls_var; }
 
 EOF
-  if compile_prog "-fPIE -DPIE" "-pie"; then
+  if test "$rabbits" = "yes" ; then
+    if compile_prog "-fPIC -DPIC" ""; then
+      QEMU_CFLAGS="-fPIC -DPIC $QEMU_CFLAGS"
+    else
+      error_exit "PIC compilation required for rabbits but not available"
+    fi
+  elif compile_prog "-fPIE -DPIE" "-pie"; then
     QEMU_CFLAGS="-fPIE -DPIE $QEMU_CFLAGS"
     LDFLAGS="-pie $LDFLAGS"
     pie="yes"
@@ -4855,6 +4867,8 @@ echo "bzip2 support     $bzip2"
 echo "NUMA host support $numa"
 echo "tcmalloc support  $tcmalloc"
 echo "jemalloc support  $jemalloc"
+echo "Rabbits support   $rabbits"
+
 
 if test "$sdl_too_old" = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -5875,6 +5889,10 @@ fi
 
 if test "$numa" = "yes"; then
   echo "CONFIG_NUMA=y" >> $config_host_mak
+fi
+
+if test "$rabbits" = "yes"; then
+  echo "CONFIG_RABBITS=y" >> $config_host_mak
 fi
 
 if test "$ccache_cpp2" = "yes"; then

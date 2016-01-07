@@ -38,17 +38,10 @@ static void sc_qemu_machine_init(MachineState *machine)
     inited_context = ctx;
 }
 
-static QEMUMachine sc_qemu_machine = {
-    .name = "sc-qemu",
-    .desc = "Rabbits SystemC/QEMU machine",
-    .init = sc_qemu_machine_init,
-    .max_cpus = 128,
-};
-
-static void sc_qemu_regiter_type(void)
-{
-    qemu_register_machine(&sc_qemu_machine);
+static void sc_qemu_machine_options(MachineClass *m) {
+    m->desc = "Rabbits SystemC/QEMU machine";
+    m->init = sc_qemu_machine_init;
+    m->max_cpus = 128;
 }
 
-machine_init(sc_qemu_regiter_type)
-
+DEFINE_MACHINE("sc-qemu",sc_qemu_machine_options)
