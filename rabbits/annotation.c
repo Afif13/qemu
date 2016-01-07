@@ -96,5 +96,5 @@ static void rabbits_report(void)
 __attribute__((constructor))
 void rabbits_init(void)
 {
-       atexit(rabbits_report);
+//       atexit(rabbits_report);
 }
