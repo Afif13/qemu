@@ -544,11 +544,13 @@ const char *qemu_get_vm_name(void)
     return qemu_name;
 }
 
+#ifndef CONFIG_RABBITS
 static void res_free(void)
 {
     g_free(boot_splash_filedata);
     boot_splash_filedata = NULL;
 }
+#endif
 
 static int default_driver_check(void *opaque, QemuOpts *opts, Error **errp)
 {
@@ -1863,7 +1865,7 @@ void qemu_system_debug_request(void)
     qemu_notify_event();
 }
 
-static bool main_loop_should_exit(void)
+bool main_loop_should_exit(void)
 {
     RunState r;
     if (qemu_debug_requested()) {
@@ -2964,6 +2966,11 @@ static void set_memory_options(uint64_t *ram_slots, ram_addr_t *maxram_size,
         exit(EXIT_FAILURE);
     }
 }
+
+#ifdef CONFIG_RABBITS
+# define main qemu_main
+int qemu_main(int argc, char **argv, char **envp);
+#endif
 
 int main(int argc, char **argv, char **envp)
 {
@@ -4681,6 +4688,7 @@ int main(int argc, char **argv, char **envp)
         }
     }
 
+#ifndef CONFIG_RABBITS
     main_loop();
     replay_disable_events();
 
@@ -4690,6 +4698,6 @@ int main(int argc, char **argv, char **envp)
 #ifdef CONFIG_TPM
     tpm_cleanup();
 #endif
-
+#endif
     return 0;
 }
