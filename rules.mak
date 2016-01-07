@@ -17,7 +17,7 @@ MAKEFLAGS += -rR
 QEMU_CXXFLAGS = -D__STDC_LIMIT_MACROS $(filter-out -Wstrict-prototypes -Wmissing-prototypes -Wnested-externs -Wold-style-declaration -Wold-style-definition -Wredundant-decls, $(QEMU_CFLAGS))
 
 # Flags for dependency generation
-QEMU_DGFLAGS += -MMD -MP -MT $@ -MF $(*D)/$(*F).d
+QEMU_DGFLAGS += -MMD -MP -MT $@ -MF $(@D)/$(*F).d
 
 # Same as -I$(SRC_PATH) -I., but for the nested source/object directories
 QEMU_INCLUDES += -I$(<D) -I$(@D)
@@ -62,24 +62,10 @@ expand-objs = $(strip $(sort $(filter %.o,$1)) \
 # must link with the C++ compiler, not the plain C compiler.
 LINKPROG = $(or $(CXX),$(CC))
 
-so_name_flag=-Wl,-soname,$2
-version_script_flag=-Wl,--version-script=$3
-whole_archive_flag=
-no_whole_archive_flag=
-
 ifeq ($(LIBTOOL),)
 LINK = $(call quiet-command, $(LINKPROG) $(QEMU_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
        $(call process-archive-undefs, $1) \
        $(version-obj-y) $(call extract-libs,$1) $(LIBS),"  LINK  $(TARGET_DIR)$@")
-SO_LINK = $(call quiet-command, $(LINKPROG) $(QEMU_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
-	  -shared \
-	  $(so_name_flag) \
-	  $(version_script_flag) \
-	  $(whole_archive_flag) \
-	  $(call process-archive-undefs, $1) \
-	  $(version-obj-y) \
-	  $(no_whole_archive_flag) \
-	  $(call extract-libs,$1) $(LIBS),"  LINK  $(TARGET_DIR)$@")
 else
 LIBTOOL += $(if $(V),,--quiet)
 %.lo: %.c
@@ -96,19 +82,6 @@ LINK = $(call quiet-command,\
        $(if $(filter %.lo %.la,$1),$(version-lobj-y),$(version-obj-y)) \
        $(if $(filter %.lo %.la,$1),$(LIBTOOLFLAGS)) \
        $(call extract-libs,$(1:.lo=.o)) $(LIBS),$(if $(filter %.lo %.la,$1),"lt LINK ", "  LINK  ")"$(TARGET_DIR)$@")
-
-SO_LINK = $(call quiet-command,\
-	  $(if $(filter %.lo %.la,$1),$(LIBTOOL) --mode=link --tag=CC \
-	  )$(LINKPROG) $(QEMU_CFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ \
-	  -shared \
-	  $(so_name_flag) \
-	  $(version_script_flag) \
-	  $(whole_archive_flag) \
-	  $(call process-archive-undefs, $1)\
-	  $(if $(filter %.lo %.la,$1),$(version-lobj-y),$(version-obj-y)) \
-	  $(no_whole_archive_flag) \
-	  $(if $(filter %.lo %.la,$1),$(LIBTOOLFLAGS)) \
-	  $(call extract-libs,$(1:.lo=.o)) $(LIBS),$(if $(filter %.lo %.la,$1),"lt LINK ", "  LINK  ")"$(TARGET_DIR)$@")
 endif
 
 %.asm: %.S
@@ -129,7 +102,8 @@ endif
 %.o: %.dtrace
 	$(call quiet-command,dtrace -o $@ -G -s $<, "  GEN   $(TARGET_DIR)$@")
 
-%$(DSOSUF): CFLAGS += -fPIC
+DSO_OBJ_CFLAGS := -fPIC -DBUILD_DSO
+module-common.o: CFLAGS += $(DSO_OBJ_CFLAGS)
 %$(DSOSUF): LDFLAGS += $(LDFLAGS_SHARED)
 %$(DSOSUF): %.mo
 	$(call LINK,$^)
@@ -378,6 +352,7 @@ define unnest-vars
         # For non-module build, add -m to -y
         $(if $(CONFIG_MODULES),
              $(foreach o,$($v),
+                   $(eval $($o-objs): CFLAGS += $(DSO_OBJ_CFLAGS))
                    $(eval $o: $($o-objs)))
              $(eval $(patsubst %-m,%-y,$v) += $($v))
              $(eval modules: $($v:%.mo=%$(DSOSUF))),
@@ -393,6 +368,6 @@ define unnest-vars
                 $(error $o added in $v but $o-objs is not set)))
         $(shell mkdir -p ./ $(sort $(dir $($v))))
         # Include all the .d files
-        $(eval -include $(addsuffix *.d, $(sort $(dir $($v)))))
+        $(eval -include $(patsubst %.o,%.d,$(patsubst %.mo,%.d,$($v))))
         $(eval $v := $(filter-out %/,$($v))))
 endef
