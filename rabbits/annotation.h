@@ -14,9 +14,10 @@ unsigned long nb_cycles ;
 enum {
     INFO_CALL = 0,
     ANNOTATION_CALL = 1,
-    ICACHE_CALL = 2,
-    DCACHE_READ_CALL = 3,
-    DCACHE_WRITE_CALL = 4
+    SYNC_CALL = 2,
+    ICACHE_CALL = 3,
+    DCACHE_READ_CALL = 4,
+    DCACHE_WRITE_CALL = 5
 };
 
 void rabbits_cpu_update();

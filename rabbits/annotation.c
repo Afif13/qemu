@@ -318,6 +318,12 @@ void rabbits_cpu_update()
         rabbits_cpu_index = 0;
     else
         rabbits_cpu_index++;
+
+    if(rabbits_cpu_index == Global_context->num_cpu) {
+        Global_context->sysc.call_rabbits(Global_context->opaque,
+                                   SYNC_CALL,rabbits_cpu_index,0,0,0);
+    }
+
     rabbits_cpu_index %= Global_context->num_cpu;
     nb_cycles = 0;
 }
@@ -327,6 +333,7 @@ static void rabbits_report(void)
 {
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                         INFO_CALL,0,0,0,0);
+    printf("Qemu icount = %lu\n",cpu_get_icount_raw());
 }
 
 __attribute__((constructor))
