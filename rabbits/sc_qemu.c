@@ -124,7 +124,7 @@ qemu_context* SC_QEMU_INIT_SYM(sc_qemu_init_struct *s)
 #else
         "-nographic",
 #endif
-        /*"-d", "in_asm,exec",*/
+        "-icount", "auto",
         /*"-D", "qemu.log",*/
     };
 
