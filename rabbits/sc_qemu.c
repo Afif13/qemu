@@ -95,6 +95,7 @@ static void sc_qemu_map_dmi(qemu_context *ctx, uint32_t base_address,
     snprintf(name, sizeof(name), "sc-dmi%d", dmi_count);
     dmi_count++;
 
+    printf("DMI called : size %d address %08x data %08x\n",size,base_address,data);
     memory_region_init_ram_ptr(dmi, NULL, name, size, data);
     vmstate_register_ram_global(dmi);
     memory_region_add_subregion(sysmem, base_address, dmi);
@@ -124,7 +125,7 @@ qemu_context* SC_QEMU_INIT_SYM(sc_qemu_init_struct *s)
 #else
         "-nographic",
 #endif
-        "-icount", "auto",
+//        "-icount", "auto",
         /*"-D", "qemu.log",*/
     };
 

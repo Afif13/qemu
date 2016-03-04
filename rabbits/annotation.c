@@ -5,7 +5,7 @@
 tcg_target_ulong helper_ret_ldub_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    tcg_target_ulong res;
+    tcg_target_ulong res,tmp;
     unsigned mmu_idx = get_mmuidx(oi);
     int index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
     target_ulong tlb_addr;
@@ -18,8 +18,16 @@ tcg_target_ulong helper_ret_ldub_mmu_rabbits(CPUArchState *env, target_ulong add
         //here we have an IO access so we return res and don't perform cache access
         return res;
     } else {
-        rabbits_dcache_read_ub(addr & 0x07fffff); //HERE we should get Physical Guest addr
+        tmp = rabbits_dcache_read_ub(addr & 0x0fffffff); //HERE we should get Physical Guest addr
+        if(tmp!=res) {
+            DPRINTF("Reading data @ addr = %08x [tlb_addr = %08x, addend = %08x]\n",addr,tlb_addr,env->tlb_table[mmu_idx][index].addend);
+            DPRINTF("qemu data = %02x -- Systemc data = %02x\n",res,tmp);
+        }
+#ifdef FULL_CACHE
+        return /*tmp*/res;
+#else
         return res;
+#endif
     }
 }
 
@@ -32,37 +40,30 @@ tcg_target_ulong helper_be_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr
 tcg_target_ulong helper_le_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    tcg_target_ulong res;
+    tcg_target_ulong res,tmp;
     unsigned mmu_idx = get_mmuidx(oi);
     int index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
     target_ulong tlb_addr;
 
-//   rabbits_dcache_read_uw(addr & 0x07fffff);
 
     res = helper_le_lduw_mmu(env,addr,oi,retaddr);
 
-/*
-    if(unlikely((addr & ~TARGET_PAGE_MASK) + 1 >= TARGET_PAGE_SIZE) {
-        //here the address is unaligned here
-        target_ulong next_addr; //we take the address in next page
-        next_addr = addr +1;
-
-        tlb_addr = env->tlb_table[mmu_idx][index+1].addr_read;
-        if (!unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
-            //it's not an IO access so we perform a cache access
-            rabbits_dcache_read_uw(next_addr & 0x07fffff);
-
-        }
-    }
-*/
     tlb_addr = env->tlb_table[mmu_idx][index].addr_read;
 
     if (unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         //here we have an IO access so we return res and don't perform cache access
         return res;
     } else {
-        rabbits_dcache_read_uw(addr & 0x07fffff);
+        tmp = rabbits_dcache_read_uw(addr & 0x0fffffff);
+        if(res!=tmp) {
+            DPRINTF("Reading data @ addr = %08x [tlb_addr = %08x, addend = %08x]\n",addr,tlb_addr,env->tlb_table[mmu_idx][index].addend);
+            DPRINTF("qemu data = %04x -- Systemc data = %04x\n",res,tmp);
+        }
+#ifdef FULL_CACHE
+        return /*tmp*/res;
+#else
         return res;
+#endif
     }
 }
 
@@ -75,7 +76,7 @@ tcg_target_ulong helper_be_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr
 tcg_target_ulong helper_le_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    tcg_target_ulong res;
+    tcg_target_ulong res,tmp;
     unsigned mmu_idx = get_mmuidx(oi);
     int index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
     target_ulong tlb_addr;
@@ -88,8 +89,16 @@ tcg_target_ulong helper_le_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr
         //here we have an IO access so we return res and don't perform cache access
         return res;
     } else {
-        rabbits_dcache_read_ul(addr & 0x07fffff);
+        tmp = rabbits_dcache_read_ul(addr & 0x0fffffff);
+        if(tmp!=res) {
+            DPRINTF("Reading data @ addr = %08x [tlb_addr = %08x, addend = %08x]\n",addr,tlb_addr,env->tlb_table[mmu_idx][index].addend);
+            DPRINTF("qemu data = %08x -- Systemc data = %08x\n",res,tmp);
+        }
+#ifdef FULL_CACHE
+        return /*tmp*/res;
+#else
         return res;
+#endif
     }
 }
 
@@ -102,7 +111,7 @@ uint64_t helper_be_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
 uint64_t helper_le_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr)
 {
-    uint64_t res;
+    uint64_t res,tmp;
     unsigned mmu_idx = get_mmuidx(oi);
     int index = (addr >> TARGET_PAGE_BITS) & (CPU_TLB_SIZE - 1);
     target_ulong tlb_addr;
@@ -115,8 +124,14 @@ uint64_t helper_le_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
         //here we have an IO access so we return res and don't perform cache access
         return res;
     } else {
-        rabbits_dcache_read_q(addr & 0x07fffff);
+        tmp=rabbits_dcache_read_q(addr & 0x0fffffff);
+        DPRINTF("qemu data = %x -- Systemc data = %x\n",res,tmp);
+        DPRINTF("Reading data @ addr = %08x [tlb_addr = %08x, addend = %08x]\n",addr,tlb_addr,env->tlb_table[mmu_idx][index].addend);
+#ifdef FULL_CACHE
+        return /*tmp*/res;
+#else
         return res;
+#endif
     }
 }
 
@@ -138,9 +153,10 @@ void helper_le_stq_mmu_rabbits(CPUArchState *env, target_ulong addr, uint64_t va
 
     tlb_addr = env->tlb_table[mmu_idx][index].addr_write;
 
+    DPRINTF("Writing 64bit @ %08x val = %08x\n",addr,val);
     if (!unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         //here we don't have an IO access so perform cache access
-        rabbits_dcache_write_q(addr & 0x07fffff, val);
+        rabbits_dcache_write_q(addr & 0x0fffffff , val);
     }
 }
 
@@ -162,9 +178,10 @@ void helper_le_stl_mmu_rabbits(CPUArchState *env, target_ulong addr, uint32_t va
 
     tlb_addr = env->tlb_table[mmu_idx][index].addr_write;
 
+    DPRINTF("Writing 32bit @ %08x val = %08x\n",addr,val);
     if (!unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         //here we don't have an IO access so perform cache access
-        rabbits_dcache_write_l(addr & 0x07fffff, val);
+        rabbits_dcache_write_l(addr & 0x0fffffff , val);
     }
 
 }
@@ -187,9 +204,10 @@ void helper_le_stw_mmu_rabbits(CPUArchState *env, target_ulong addr, uint16_t va
 
     tlb_addr = env->tlb_table[mmu_idx][index].addr_write;
 
+    DPRINTF("Writing 16bit @ %08x val = %08x\n",addr,val);
     if (!unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         //here we don't have an IO access so perform cache access
-        rabbits_dcache_write_w(addr & 0x07fffff, val);
+        rabbits_dcache_write_w(addr & 0x0fffffff , val);
     }
 }
 
@@ -204,9 +222,10 @@ void helper_ret_stb_mmu_rabbits(CPUArchState *env, target_ulong addr, uint8_t va
 
     tlb_addr = env->tlb_table[mmu_idx][index].addr_write;
 
+    DPRINTF("Writing 8bit @ %08x val = %08x\n",addr,val);
     if (!unlikely(tlb_addr & ~TARGET_PAGE_MASK)) {
         //here we don't have an IO access so perform cache access
-        rabbits_dcache_write_b(addr & 0x07fffff, val);
+        rabbits_dcache_write_b(addr & 0x0fffffff , val);
     }
 
 }
@@ -216,59 +235,64 @@ void helper_ret_stb_mmu_rabbits(CPUArchState *env, target_ulong addr, uint8_t va
 
 void rabbits_icache_call(unsigned long addr)
 {
-    Global_context->sysc.call_rabbits(Global_context->opaque,
-                               ICACHE_CALL,rabbits_cpu_index,addr,0,0);
+    unsigned long tag = addr >> ICACHE_LINE_BITS;
+
+    if(tag != last_pc_tag) {
+        Global_context->sysc.call_rabbits(Global_context->opaque,
+                                   ICACHE_CALL,rabbits_cpu_index,addr,0,0);
+        last_pc_tag = tag;
+    }
 }
 
 
-int8_t rabbits_dcache_read_ub(unsigned long addr)
+uint8_t rabbits_dcache_read_ub(unsigned long addr)
 {
-//    printf("Reading Byte @%08x\n",addr);
-    return (int8_t)Global_context->sysc.call_rabbits(Global_context->opaque,
+//    DPRINTF("Reading Byte @%08x\n",addr);
+    return (uint8_t)Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_READ_CALL,rabbits_cpu_index,addr,0,1);
 }
-int16_t rabbits_dcache_read_uw(unsigned long addr)
+uint16_t rabbits_dcache_read_uw(unsigned long addr)
 {
-//    printf("Reading Word @%08x\n",addr);
-    return (int16_t)Global_context->sysc.call_rabbits(Global_context->opaque,
+//    DPRINTF("Reading Word @%08x\n",addr);
+    return (uint16_t)Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_READ_CALL,rabbits_cpu_index,addr,0,2);
 }
-int32_t rabbits_dcache_read_ul(unsigned long addr)
+uint32_t rabbits_dcache_read_ul(unsigned long addr)
 {
-//    printf("Reading Long @%08x\n",addr);
-    return (int32_t)Global_context->sysc.call_rabbits(Global_context->opaque,
+//    DPRINTF("Reading Long @%08x\n",addr);
+    return (uint32_t)Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_READ_CALL,rabbits_cpu_index,addr,0,4);
 }
-int64_t rabbits_dcache_read_q(unsigned long addr)
+uint64_t rabbits_dcache_read_q(unsigned long addr)
 {
-//    printf("Reading Q @%08x\n",addr);
-    return (int64_t)Global_context->sysc.call_rabbits(Global_context->opaque,
+//    DPRINTF("Reading Q @%08x\n",addr);
+    return (uint64_t)Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_READ_CALL,rabbits_cpu_index,addr,0,8);
 }
 
 
 
-void rabbits_dcache_write_b(unsigned long addr, int8_t val)
+void rabbits_dcache_write_b(unsigned long addr, uint8_t val)
 {
-//    printf("writing byte @%08x\n",addr);
+//    DPRINTF("writing byte @%08x\n",addr);
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_WRITE_CALL,rabbits_cpu_index,addr,val,1);
 }
-void rabbits_dcache_write_w(unsigned long addr, int16_t val)
+void rabbits_dcache_write_w(unsigned long addr, uint16_t val)
 {
-//    printf("writing word @%08x\n",addr);
+//    DPRINTF("writing word @%08x\n",addr);
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_WRITE_CALL,rabbits_cpu_index,addr,val,2);
 }
-void rabbits_dcache_write_l(unsigned long addr, int32_t val)
+void rabbits_dcache_write_l(unsigned long addr, uint32_t val)
 {
-//    printf("writing long @%08x\n",addr);
+//    DPRINTF("writing long @%08x\n",addr);
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_WRITE_CALL,rabbits_cpu_index,addr,val,4);
 }
-void rabbits_dcache_write_q(unsigned long addr, int64_t val)
+void rabbits_dcache_write_q(unsigned long addr, uint64_t val)
 {
-//    printf("writing Q @%08x\n",addr);
+//    DPRINTF("writing Q @%08x\n",addr);
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                DCACHE_WRITE_CALL,rabbits_cpu_index,addr,val,8);
 }
@@ -333,12 +357,11 @@ static void rabbits_report(void)
 {
     Global_context->sysc.call_rabbits(Global_context->opaque,
                                         INFO_CALL,0,0,0,0);
-    printf("Qemu icount = %lu\n",cpu_get_icount_raw());
 }
 
 __attribute__((constructor))
 void rabbits_init(void)
 {
-//       atexit(rabbits_report);
+    atexit(rabbits_report);
 }
 

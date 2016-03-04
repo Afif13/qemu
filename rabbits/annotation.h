@@ -2,6 +2,16 @@
 #include "qemu_context_priv.h"
 #include "tcg-op.h"
 
+
+//#define DEBUG_ANNOTATION
+
+#ifdef DEBUG_ANNOTATION
+# define DPRINTF(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#else
+# define DPRINTF(fmt, ...) do {} while(0)
+#endif
+
+
 extern qemu_context *Global_context;
 
 //The current CPU being run by Qemu
@@ -10,6 +20,18 @@ int32_t rabbits_cpu_index = -1;
 /*The current number of cycles of the current CPU
   this number is reset when we change the CPU */
 unsigned long nb_cycles ;
+
+
+/* The last PC used with icache call
+   this will allow us to only do a new icache call
+   if we are in a new line
+   we only need the tag
+*/
+unsigned long last_pc_tag = 0xDEADBEEF;
+
+
+#include"../../../src/components/qemu_wrapper/qemu-cache.h" //very bad idea ..
+//We need this include for the FULL_CACHE and I_CACHE_LINES define
 
 enum {
     INFO_CALL = 0,
@@ -28,18 +50,18 @@ void rabbits_annotate_arm_insn(unsigned long insn);
 void rabbits_annotate_thumb_insn( unsigned long insn);
 
 /* Instruction Cache */
-void rabbits_icache_call(unsigned long addr);
+void rabbits_icache_call(unsigned long pc);
 
 /* Data Cache */
-int8_t rabbits_dcache_read_ub(unsigned long addr);
-int16_t rabbits_dcache_read_uw(unsigned long addr);
-int32_t rabbits_dcache_read_l(unsigned long addr);
-int64_t rabbits_dcache_read_q(unsigned long addr);
+uint8_t rabbits_dcache_read_ub(unsigned long addr);
+uint16_t rabbits_dcache_read_uw(unsigned long addr);
+uint32_t rabbits_dcache_read_ul(unsigned long addr);
+uint64_t rabbits_dcache_read_q(unsigned long addr);
 
-void rabbits_dcache_write_b(unsigned long addr, int8_t val);
-void rabbits_dcache_write_w(unsigned long addr, int16_t val);
-void rabbits_dcache_write_l(unsigned long addr, int32_t val);
-void rabbits_dcache_write_q(unsigned long addr, int64_t val);
+void rabbits_dcache_write_b(unsigned long addr, uint8_t val);
+void rabbits_dcache_write_w(unsigned long addr, uint16_t val);
+void rabbits_dcache_write_l(unsigned long addr, uint32_t val);
+void rabbits_dcache_write_q(unsigned long addr, uint64_t val);
 
 
 /* Helpers Load */
