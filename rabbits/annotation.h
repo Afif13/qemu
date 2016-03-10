@@ -1,3 +1,7 @@
+#ifndef ANNOTATION
+#define ANNOTATION
+
+
 #include<stdio.h>
 #include "qemu_context_priv.h"
 #include "tcg-op.h"
@@ -14,43 +18,53 @@
 
 extern qemu_context *Global_context;
 
-//The current CPU being run by Qemu
-int32_t rabbits_cpu_index = -1;
-
-/*The current number of cycles of the current CPU
-  this number is reset when we change the CPU */
-unsigned long nb_cycles ;
-
-
-/* The last PC used with icache call
-   this will allow us to only do a new icache call
-   if we are in a new line
-   we only need the tag
-*/
-unsigned long last_pc_tag = 0xDEADBEEF;
-
 
 #include"../../../src/components/qemu_wrapper/qemu-cache.h" //very bad idea ..
 //We need this include for the FULL_CACHE and I_CACHE_LINES define
 
 enum {
+    /* Used to show Info of all the components */
     INFO_CALL = 0,
+    /* Used to call the qemu_annotation component to update
+       the Cycle Number for the CPU
+     */
     ANNOTATION_CALL = 1,
+    /* Used to do a synchronization with systemC
+       do some wait after a run of all the CPUs
+    */
     SYNC_CALL = 2,
+    /* Perform Instruction Cache Call */
     ICACHE_CALL = 3,
+    /* Perform Data Cache Read */
     DCACHE_READ_CALL = 4,
-    DCACHE_WRITE_CALL = 5
+    /* Perform Data Cache Write */
+    DCACHE_WRITE_CALL = 5,
+    /* Invalidate a Data Cache entry */
+    INVALIDATE_CALL = 6
 };
+
+
+/* Update the Current CPU */
 
 void rabbits_cpu_update();
 
-/* Annotation */
+
+/* Arm Specific Annotation */
+
+void rabbits_arm_call(uint32_t pc, uint32_t insn);
+
 void rabbits_annotate_arm_insn(unsigned long insn);
 
 void rabbits_annotate_thumb_insn( unsigned long insn);
 
+
+/* End Arm Specific Annotation*/
+
+/* Generic Annotion (archicture independant) */
+
 /* Instruction Cache */
-void rabbits_icache_call(unsigned long pc);
+void rabbits_icache(unsigned long pc);
+
 
 /* Data Cache */
 uint8_t rabbits_dcache_read_ub(unsigned long addr);
@@ -64,16 +78,13 @@ void rabbits_dcache_write_l(unsigned long addr, uint32_t val);
 void rabbits_dcache_write_q(unsigned long addr, uint64_t val);
 
 
-/* Helpers Load */
+/* Load Helpers */
 
 tcg_target_ulong helper_ret_ldub_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_ret_ldsb_mmu_rabbits(CPUArchState *env, target_ulong addr,
-                                     TCGMemOpIdx oi, uintptr_t retaddr)
-{
-    return (int8_t)helper_ret_ldub_mmu_rabbits(env,addr,oi,retaddr);
-}
+                                     TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_le_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
@@ -82,16 +93,10 @@ tcg_target_ulong helper_be_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr
                                      TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_le_ldsw_mmu_rabbits(CPUArchState *env, target_ulong addr,
-                                     TCGMemOpIdx oi, uintptr_t retaddr)
-{
-    return (int16_t)helper_le_lduw_mmu_rabbits(env,addr,oi,retaddr);
-}
+                                     TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_be_ldsw_mmu_rabbits(CPUArchState *env, target_ulong addr,
-                                     TCGMemOpIdx oi, uintptr_t retaddr)
-{
-    return (int16_t)helper_be_lduw_mmu_rabbits(env,addr,oi,retaddr);
-}
+                                     TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_le_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
@@ -100,16 +105,10 @@ tcg_target_ulong helper_be_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr
                                      TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_le_ldsl_mmu_rabbits(CPUArchState *env, target_ulong addr,
-                                     TCGMemOpIdx oi, uintptr_t retaddr)
-{
-    return (int32_t)helper_le_ldul_mmu_rabbits(env,addr,oi,retaddr);
-}
+                                     TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_be_ldsl_mmu_rabbits(CPUArchState *env, target_ulong addr,
-                                     TCGMemOpIdx oi, uintptr_t retaddr)
-{
-    return (int32_t)helper_be_ldul_mmu_rabbits(env,addr,oi,retaddr);
-}
+                                     TCGMemOpIdx oi, uintptr_t retaddr);
 
 tcg_target_ulong helper_le_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
@@ -118,7 +117,7 @@ tcg_target_ulong helper_be_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
 
 
-/* Helpers store */
+/* Store Helpers */
 
 void helper_le_stq_mmu_rabbits(CPUArchState *env, target_ulong addr, uint64_t val,
                                      TCGMemOpIdx oi, uintptr_t retaddr);
@@ -142,3 +141,4 @@ void helper_ret_stb_mmu_rabbits(CPUArchState *env, target_ulong addr, uint8_t va
                                      TCGMemOpIdx oi, uintptr_t retaddr);
 
 
+#endif

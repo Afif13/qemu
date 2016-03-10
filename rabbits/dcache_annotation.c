@@ -1,5 +1,11 @@
 #include "annotation.h"
 
+//This should be architecture independant
+
+
+//extern declaration
+extern int32_t rabbits_cpu_index;
+
 /* Helper Implementation*/
 
 tcg_target_ulong helper_ret_ldub_mmu_rabbits(CPUArchState *env, target_ulong addr,
@@ -29,6 +35,12 @@ tcg_target_ulong helper_ret_ldub_mmu_rabbits(CPUArchState *env, target_ulong add
         return res;
 #endif
     }
+}
+
+tcg_target_ulong helper_ret_ldsb_mmu_rabbits(CPUArchState *env, target_ulong addr,
+                                     TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    return (int8_t)helper_ret_ldub_mmu_rabbits(env,addr,oi,retaddr);
 }
 
 tcg_target_ulong helper_be_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr,
@@ -67,6 +79,19 @@ tcg_target_ulong helper_le_lduw_mmu_rabbits(CPUArchState *env, target_ulong addr
     }
 }
 
+tcg_target_ulong helper_le_ldsw_mmu_rabbits(CPUArchState *env, target_ulong addr,
+                                     TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    return (int16_t)helper_le_lduw_mmu_rabbits(env,addr,oi,retaddr);
+}
+
+tcg_target_ulong helper_be_ldsw_mmu_rabbits(CPUArchState *env, target_ulong addr,
+                                     TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    return (int16_t)helper_be_lduw_mmu_rabbits(env,addr,oi,retaddr);
+}
+
+
 tcg_target_ulong helper_be_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr,
                                      TCGMemOpIdx oi, uintptr_t retaddr)
 {
@@ -100,6 +125,18 @@ tcg_target_ulong helper_le_ldul_mmu_rabbits(CPUArchState *env, target_ulong addr
         return res;
 #endif
     }
+}
+
+tcg_target_ulong helper_le_ldsl_mmu_rabbits(CPUArchState *env, target_ulong addr,
+                                     TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    return (int32_t)helper_le_ldul_mmu_rabbits(env,addr,oi,retaddr);
+}
+
+tcg_target_ulong helper_be_ldsl_mmu_rabbits(CPUArchState *env, target_ulong addr,
+                                     TCGMemOpIdx oi, uintptr_t retaddr)
+{
+    return (int32_t)helper_be_ldul_mmu_rabbits(env,addr,oi,retaddr);
 }
 
 uint64_t helper_be_ldq_mmu_rabbits(CPUArchState *env, target_ulong addr,
@@ -233,17 +270,6 @@ void helper_ret_stb_mmu_rabbits(CPUArchState *env, target_ulong addr, uint8_t va
 
 /* end helpers*/
 
-void rabbits_icache_call(unsigned long addr)
-{
-    unsigned long tag = addr >> ICACHE_LINE_BITS;
-
-    if(tag != last_pc_tag) {
-        Global_context->sysc.call_rabbits(Global_context->opaque,
-                                   ICACHE_CALL,rabbits_cpu_index,addr,0,0);
-        last_pc_tag = tag;
-    }
-}
-
 
 uint8_t rabbits_dcache_read_ub(unsigned long addr)
 {
@@ -297,71 +323,4 @@ void rabbits_dcache_write_q(unsigned long addr, uint64_t val)
                                DCACHE_WRITE_CALL,rabbits_cpu_index,addr,val,8);
 }
 
-
-void rabbits_annotate_arm_insn(unsigned long insn)
-{
-
-    TCGv_ptr    addr = tcg_const_ptr ((tcg_target_long) &nb_cycles);
-    TCGv    t1 = tcg_temp_new();
-
-
-    tcg_gen_ld_tl (t1, addr, 0);
-    tcg_gen_addi_tl (t1, t1, 1);
-    tcg_gen_st_tl (t1, addr, 0);
-
-    //TODO : Test the cases we have more than 1 cycle
-
-    tcg_temp_free (t1);
-    tcg_temp_free_ptr (addr);
-
-}
-
-void rabbits_annotate_thumb_insn( unsigned long insn)
-{
-
-    TCGv_ptr    addr = tcg_const_ptr ((tcg_target_long) &nb_cycles);
-    TCGv    t1 = tcg_temp_new();
-
-
-    tcg_gen_ld_tl (t1, addr, 0);
-    tcg_gen_addi_tl (t1, t1, 1);
-    tcg_gen_st_tl (t1, addr, 0);
-
-    tcg_temp_free (t1);
-    tcg_temp_free_ptr (addr);
-
-}
-
-void rabbits_cpu_update()
-{
-    if(rabbits_cpu_index!=-1) {
-        Global_context->sysc.call_rabbits(Global_context->opaque,
-                                   ANNOTATION_CALL,rabbits_cpu_index,nb_cycles,0,0);
-    }
-    if(rabbits_cpu_index == -1)
-        rabbits_cpu_index = 0;
-    else
-        rabbits_cpu_index++;
-
-    if(rabbits_cpu_index == Global_context->num_cpu) {
-        Global_context->sysc.call_rabbits(Global_context->opaque,
-                                   SYNC_CALL,rabbits_cpu_index,0,0,0);
-    }
-
-    rabbits_cpu_index %= Global_context->num_cpu;
-    nb_cycles = 0;
-}
-
-
-static void rabbits_report(void)
-{
-    Global_context->sysc.call_rabbits(Global_context->opaque,
-                                        INFO_CALL,0,0,0,0);
-}
-
-__attribute__((constructor))
-void rabbits_init(void)
-{
-    atexit(rabbits_report);
-}
 
